@@ -29,13 +29,34 @@
 <body>
 <div id="root"><div style="color:#7d8794;font-family:sans-serif;text-align:center;padding:80px 20px;">載入中…<br><span style="font-size:12px;">首次開啟需連網載入元件,之後可離線使用</span></div></div>
 
-<script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+<script>
+// 載入逾時偵測:8 秒內元件沒載好就顯示重試畫面
+window.__libsLoaded = { react: false, dom: false, recharts: false, babel: false };
+window.__loadTimeout = setTimeout(function () {
+  var l = window.__libsLoaded;
+  if (!(l.react && l.dom && l.recharts && l.babel)) {
+    var miss = [];
+    if (!l.react) miss.push("React");
+    if (!l.dom) miss.push("ReactDOM");
+    if (!l.recharts) miss.push("Recharts");
+    if (!l.babel) miss.push("Babel");
+    document.getElementById("root").innerHTML =
+      '<div style="color:#e6edf3;font-family:sans-serif;text-align:center;padding:60px 24px;">' +
+      '<div style="font-size:16px;margin-bottom:8px;">元件載入逾時</div>' +
+      '<div style="color:#7d8794;font-size:13px;margin-bottom:20px;">未載入: ' + miss.join("、") + '<br>可能是網路較慢,請重試</div>' +
+      '<button onclick="location.reload()" style="background:#d9a441;color:#000;font-weight:600;font-size:15px;padding:12px 28px;border:none;border-radius:10px;">重新載入</button>' +
+      '</div>';
+  }
+}, 8000);
+</script>
 
-<script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+<script crossorigin src="https://cdn.jsdelivr.net/npm/react@18/umd/react.production.min.js" onload="window.__libsLoaded.react=true"></script>
 
-<script crossorigin src="https://unpkg.com/recharts@2.12.7/umd/Recharts.js"></script>
+<script crossorigin src="https://cdn.jsdelivr.net/npm/react-dom@18/umd/react-dom.production.min.js" onload="window.__libsLoaded.dom=true"></script>
 
-<script crossorigin src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+<script crossorigin src="https://cdn.jsdelivr.net/npm/recharts@2.12.7/umd/Recharts.js" onload="window.__libsLoaded.recharts=true"></script>
+
+<script crossorigin src="https://cdn.jsdelivr.net/npm/@babel/standalone/babel.min.js" onload="window.__libsLoaded.babel=true"></script>
 
 <script>
 // ============================================================
@@ -854,6 +875,7 @@ return (
 // 掛載
 // ============================================================
 const rootEl = document.getElementById(“root”);
+if (window.__loadTimeout) clearTimeout(window.__loadTimeout);
 ReactDOM.createRoot(rootEl).render(<TradeJournal />);
 
 </script>
