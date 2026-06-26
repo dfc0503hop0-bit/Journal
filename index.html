@@ -49,22 +49,24 @@ window.__updateStatus = function () {
   el.innerHTML =
     "React " + (l.react ? "✓" : "…") + " &nbsp; " +
     "ReactDOM " + (l.dom ? "✓" : "…") + "<br>" +
+    "PropTypes " + (l.proptypes ? "✓" : "…") + "<br>" +
     "Recharts " + (l.recharts ? "✓" : "…") + " &nbsp; " +
     "Babel " + (l.babel ? "✓" : "…") +
-    (l.react && l.dom && l.recharts && l.babel ? "<br>元件就緒,編譯中…" : "");
+    (l.react && l.dom && l.proptypes && l.recharts && l.babel ? "<br>元件就緒,編譯中…" : "");
 };
 </script>
 
 <script>
 // 載入逾時偵測:8 秒內元件沒載好就顯示重試畫面
-window.__libsLoaded = { react: false, dom: false, recharts: false, babel: false };
+window.__libsLoaded = { react: false, dom: false, proptypes: false, recharts: false, babel: false };
 window.__loadTimeout = setTimeout(function () {
   var l = window.__libsLoaded;
   // 只有當外部元件「真的沒載入」才顯示重試;若元件都載入了(代表在跑babel編譯)就繼續等
-  if (!(l.react && l.dom && l.recharts && l.babel)) {
+  if (!(l.react && l.dom && l.proptypes && l.recharts && l.babel)) {
     var miss = [];
     if (!l.react) miss.push("React");
     if (!l.dom) miss.push("ReactDOM");
+    if (!l.proptypes) miss.push("PropTypes");
     if (!l.recharts) miss.push("Recharts");
     if (!l.babel) miss.push("Babel");
     document.getElementById("root").innerHTML =
@@ -80,6 +82,8 @@ window.__loadTimeout = setTimeout(function () {
 <script crossorigin src="https://cdn.jsdelivr.net/npm/react@18/umd/react.production.min.js" onload="window.__libsLoaded.react=true;window.__updateStatus()"></script>
 
 <script crossorigin src="https://cdn.jsdelivr.net/npm/react-dom@18/umd/react-dom.production.min.js" onload="window.__libsLoaded.dom=true;window.__updateStatus()"></script>
+
+<script crossorigin src="https://cdn.jsdelivr.net/npm/prop-types@15.8.1/prop-types.min.js" onload="window.__libsLoaded.proptypes=true;window.__updateStatus()"></script>
 
 <script crossorigin src="https://cdn.jsdelivr.net/npm/recharts@2.12.7/umd/Recharts.js" onload="window.__libsLoaded.recharts=true;window.__updateStatus()"></script>
 
