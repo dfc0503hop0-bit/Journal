@@ -25,15 +25,42 @@
   /* 安全區域(瀏海/底部手勢列) */
   #root { padding-top: env(safe-area-inset-top); padding-bottom: env(safe-area-inset-bottom); }
 </style>
+<script>
+// 全域錯誤監聽:任何錯誤(含 babel 編譯失敗)都顯示出來,不靜默卡住
+window.addEventListener("error", function (e) {
+  var root = document.getElementById("root");
+  // 只在還停留在載入畫面時覆蓋(避免蓋掉已正常運作的 App)
+  if (root && document.getElementById("loadstatus")) {
+    root.innerHTML = '<div style="color:#e8482b;font-family:monospace;padding:40px 20px;font-size:12px;white-space:pre-wrap;">發生錯誤:\n' +
+      (e.message || "未知") + '\n\n' + (e.filename || "") + (e.lineno ? " 第" + e.lineno + "行" : "") + '</div>';
+  }
+});
+</script>
 </head>
 <body>
-<div id="root"><div style="color:#7d8794;font-family:sans-serif;text-align:center;padding:80px 20px;">載入中…<br><span style="font-size:12px;">首次開啟需連網載入元件,之後可離線使用</span></div></div>
+<div id="root"><div id="loadstatus" style="color:#7d8794;font-family:sans-serif;text-align:center;padding:60px 24px;line-height:2;">載入中…<br><span style="font-size:12px;" id="ls-detail">準備中</span></div></div>
+
+<script>
+// 即時更新載入狀態文字
+window.__updateStatus = function () {
+  var l = window.__libsLoaded || {};
+  var el = document.getElementById("ls-detail");
+  if (!el) return;
+  el.innerHTML =
+    "React " + (l.react ? "✓" : "…") + " &nbsp; " +
+    "ReactDOM " + (l.dom ? "✓" : "…") + "<br>" +
+    "Recharts " + (l.recharts ? "✓" : "…") + " &nbsp; " +
+    "Babel " + (l.babel ? "✓" : "…") +
+    (l.react && l.dom && l.recharts && l.babel ? "<br>元件就緒,編譯中…" : "");
+};
+</script>
 
 <script>
 // 載入逾時偵測:8 秒內元件沒載好就顯示重試畫面
 window.__libsLoaded = { react: false, dom: false, recharts: false, babel: false };
 window.__loadTimeout = setTimeout(function () {
   var l = window.__libsLoaded;
+  // 只有當外部元件「真的沒載入」才顯示重試;若元件都載入了(代表在跑babel編譯)就繼續等
   if (!(l.react && l.dom && l.recharts && l.babel)) {
     var miss = [];
     if (!l.react) miss.push("React");
@@ -47,16 +74,16 @@ window.__loadTimeout = setTimeout(function () {
       '<button onclick="location.reload()" style="background:#d9a441;color:#000;font-weight:600;font-size:15px;padding:12px 28px;border:none;border-radius:10px;">重新載入</button>' +
       '</div>';
   }
-}, 8000);
+}, 25000);
 </script>
 
-<script crossorigin src="https://cdn.jsdelivr.net/npm/react@18/umd/react.production.min.js" onload="window.__libsLoaded.react=true"></script>
+<script crossorigin src="https://cdn.jsdelivr.net/npm/react@18/umd/react.production.min.js" onload="window.__libsLoaded.react=true;window.__updateStatus()"></script>
 
-<script crossorigin src="https://cdn.jsdelivr.net/npm/react-dom@18/umd/react-dom.production.min.js" onload="window.__libsLoaded.dom=true"></script>
+<script crossorigin src="https://cdn.jsdelivr.net/npm/react-dom@18/umd/react-dom.production.min.js" onload="window.__libsLoaded.dom=true;window.__updateStatus()"></script>
 
-<script crossorigin src="https://cdn.jsdelivr.net/npm/recharts@2.12.7/umd/Recharts.js" onload="window.__libsLoaded.recharts=true"></script>
+<script crossorigin src="https://cdn.jsdelivr.net/npm/recharts@2.12.7/umd/Recharts.js" onload="window.__libsLoaded.recharts=true;window.__updateStatus()"></script>
 
-<script crossorigin src="https://cdn.jsdelivr.net/npm/@babel/standalone/babel.min.js" onload="window.__libsLoaded.babel=true"></script>
+<script crossorigin src="https://cdn.jsdelivr.net/npm/@babel/standalone/babel.min.js" onload="window.__libsLoaded.babel=true;window.__updateStatus()"></script>
 
 <script>
 // ============================================================
@@ -876,7 +903,11 @@ return (
 // ============================================================
 const rootEl = document.getElementById(“root”);
 if (window.__loadTimeout) clearTimeout(window.__loadTimeout);
+try {
 ReactDOM.createRoot(rootEl).render(<TradeJournal />);
+} catch (err) {
+rootEl.innerHTML = ‘<div style="color:#e8482b;font-family:monospace;padding:40px 20px;font-size:13px;white-space:pre-wrap;">渲染錯誤:\n’ + (err && err.message ? err.message : String(err)) + ‘</div>’;
+}
 
 </script>
 </body>
