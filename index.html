@@ -1,0 +1,861 @@
+<!DOCTYPE html>
+
+<html lang="zh-Hant">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
+<meta name="apple-mobile-web-app-capable" content="yes" />
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+<meta name="apple-mobile-web-app-title" content="交易日誌" />
+<meta name="theme-color" content="#0e1116" />
+<title>交易檢討日誌</title>
+<!-- PWA manifest 內嵌(base64),讓「加到主畫面」有正確圖示與名稱 -->
+<link rel="manifest" id="manifest-placeholder" />
+<link rel="apple-touch-icon" href="data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAxMDAgMTAwIj48cmVjdCB3aWR0aD0iMTAwIiBoZWlnaHQ9IjEwMCIgcng9IjIwIiBmaWxsPSIjMGUxMTE2Ii8+PHBhdGggZD0iTTIwIDcwIEwzNSA1MCBMNTAgNjAgTDgwIDMwIiBzdHJva2U9IiMxZmI4N2EiIHN0cm9rZS13aWR0aD0iNiIgZmlsbD0ibm9uZSIgc3Ryb2tlLWxpbmVjYXA9InJvdW5kIiBzdHJva2UtbGluZWpvaW49InJvdW5kIi8+PGNpcmNsZSBjeD0iODAiIGN5PSIzMCIgcj0iNiIgZmlsbD0iI2Q5YTQ0MSIvPjwvc3ZnPg==" />
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500;600&display=swap');
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body { margin: 0; padding: 0; background: #0e1116; }
+  body { font-family: 'IBM Plex Sans', system-ui, -apple-system, sans-serif; }
+  .mono { font-family: 'IBM Plex Mono', monospace; font-variant-numeric: tabular-nums; }
+  input, select, textarea { font-family: inherit; }
+  button { cursor: pointer; border: none; font-family: inherit; }
+  ::-webkit-scrollbar { width: 6px; height: 6px; }
+  ::-webkit-scrollbar-thumb { background: #2a323d; border-radius: 3px; }
+  /* 安全區域(瀏海/底部手勢列) */
+  #root { padding-top: env(safe-area-inset-top); padding-bottom: env(safe-area-inset-bottom); }
+</style>
+</head>
+<body>
+<div id="root"><div style="color:#7d8794;font-family:sans-serif;text-align:center;padding:80px 20px;">載入中…<br><span style="font-size:12px;">首次開啟需連網載入元件,之後可離線使用</span></div></div>
+
+<script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+
+<script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+
+<script crossorigin src="https://unpkg.com/recharts@2.12.7/umd/Recharts.js"></script>
+
+<script crossorigin src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+
+<script>
+// ============================================================
+// 動態產生 PWA manifest(讓加到主畫面有正確名稱/圖示/獨立視窗)
+// ============================================================
+const iconSvg = 'data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAxMDAgMTAwIj48cmVjdCB3aWR0aD0iMTAwIiBoZWlnaHQ9IjEwMCIgcng9IjIwIiBmaWxsPSIjMGUxMTE2Ii8+PHBhdGggZD0iTTIwIDcwIEwzNSA1MCBMNTAgNjAgTDgwIDMwIiBzdHJva2U9IiMxZmI4N2EiIHN0cm9rZS13aWR0aD0iNiIgZmlsbD0ibm9uZSIgc3Ryb2tlLWxpbmVjYXA9InJvdW5kIiBzdHJva2UtbGluZWpvaW49InJvdW5kIi8+PGNpcmNsZSBjeD0iODAiIGN5PSIzMCIgcj0iNiIgZmlsbD0iI2Q5YTQ0MSIvPjwvc3ZnPg==';
+const manifest = {
+  name: "交易檢討日誌", short_name: "交易日誌",
+  start_url: ".", display: "standalone",
+  background_color: "#0e1116", theme_color: "#0e1116",
+  icons: [{ src: iconSvg, sizes: "any", type: "image/svg+xml" }],
+};
+const mBlob = new Blob([JSON.stringify(manifest)], { type: "application/json" });
+document.getElementById("manifest-placeholder").setAttribute("href", URL.createObjectURL(mBlob));
+
+// ============================================================
+// IndexedDB 儲存層 — 資料永久存在手機本機,重整/關閉/重開機都不掉
+// ============================================================
+const DB_NAME = "tradeJournalDB";
+const STORE = "trades";
+const DB_VERSION = 1;
+
+function openDB() {
+  return new Promise((resolve, reject) => {
+    const req = indexedDB.open(DB_NAME, DB_VERSION);
+    req.onupgradeneeded = (e) => {
+      const db = e.target.result;
+      if (!db.objectStoreNames.contains(STORE)) {
+        db.createObjectStore(STORE, { keyPath: "id" });
+      }
+    };
+    req.onsuccess = (e) => resolve(e.target.result);
+    req.onerror = (e) => reject(e.target.error);
+  });
+}
+
+async function dbGetAll() {
+  const db = await openDB();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(STORE, "readonly");
+    const req = tx.objectStore(STORE).getAll();
+    req.onsuccess = () => resolve(req.result || []);
+    req.onerror = () => reject(req.error);
+  });
+}
+
+async function dbPut(trade) {
+  const db = await openDB();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(STORE, "readwrite");
+    tx.objectStore(STORE).put(trade);
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error);
+  });
+}
+
+async function dbDelete(id) {
+  const db = await openDB();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(STORE, "readwrite");
+    tx.objectStore(STORE).delete(id);
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error);
+  });
+}
+
+async function dbBulkPut(trades) {
+  const db = await openDB();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(STORE, "readwrite");
+    const store = tx.objectStore(STORE);
+    trades.forEach((t) => store.put(t));
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error);
+  });
+}
+</script>
+
+<script type="text/babel" data-presets="react">
+const { useState, useMemo, useRef, useEffect } = React;
+const {
+  LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, ReferenceLine,
+  AreaChart, Area, BarChart, Bar, Cell, ScatterChart, Scatter, ZAxis,
+} = Recharts;
+
+// ============================================================
+// 顏色慣例:綠=賺 紅=賠 (對調只需互換下面兩個常數值)
+// ============================================================
+const PROFIT_COLOR = "#1fb87a";
+const LOSS_COLOR = "#e8482b";
+const profitBg = (a) => `rgba(31,184,122,${a})`;
+const lossBg = (a) => `rgba(232,72,43,${a})`;
+const ACCENT = "#d9a441";
+const BG = "#0e1116";
+const PANEL = "#161b22";
+const PANEL2 = "#1c232c";
+const BORDER = "#2a323d";
+const TEXT = "#e6edf3";
+const MUTED = "#7d8794";
+
+const pnlColor = (v) => (v > 0 ? PROFIT_COLOR : v < 0 ? LOSS_COLOR : MUTED);
+const fmtMoney = (v) =>
+  (v >= 0 ? "+" : "−") + "US$" +
+  Math.abs(v).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+const fmtR = (v) => (v >= 0 ? "+" : "−") + Math.abs(v).toFixed(2) + "R";
+
+const seed = () => {
+  const today = new Date();
+  const d = (offset) => {
+    const x = new Date(today);
+    x.setDate(x.getDate() - offset);
+    return x.toISOString().slice(0, 10);
+  };
+  return [
+    { id: 1, date: d(1), time: "21:30", symbol: "XAUUSD", dir: "空", entry: 3996.3, sl: 4001.4, tp: 3988.5, exit: 3988.5, qty: 2, pointValue: 100, fee: 12, risk: 1020, rMultiple: 1.2, pnl: 1548, strategy: "SNR 3.0", reason: "反彈到阻力 HPA 區 + 0.5 FIBO 重疊做空", review: "進場準,但 R:R 偏低,下次等更深回撤", imgs: [] },
+    { id: 2, date: d(2), time: "09:45", symbol: "NQ", dir: "多", entry: 21800, sl: 21750, tp: 21950, exit: 21762, qty: 1, pointValue: 20, fee: 5, risk: 1000, rMultiple: -0.78, pnl: -765, strategy: "ICT OTE", reason: "突破整理高,追進場", review: "追高,隔根破低,假突破", imgs: [] },
+    { id: 3, date: d(2), time: "22:15", symbol: "NQ", dir: "多", entry: 21800, sl: 21750, tp: 21950, exit: 21950, qty: 1, pointValue: 20, fee: 5, risk: 1000, rMultiple: 2.95, pnl: 2995, strategy: "ICT OTE", reason: "Kill Zone 內掃流動性後位移進場", review: "教科書級進場,守住沒提前出場", imgs: [] },
+    { id: 4, date: d(5), time: "15:00", symbol: "XAUUSD", dir: "空", entry: 4010, sl: 4016, tp: 3998, exit: 4016, qty: 1, pointValue: 100, fee: 6, risk: 600, rMultiple: -1.0, pnl: -606, strategy: "SNR 3.0", reason: "阻力區做空", review: "趨勢盤逆勢,違反規則,該避開", imgs: [] },
+    { id: 5, date: d(8), time: "10:30", symbol: "MNQ", dir: "多", entry: 21300, sl: 21250, tp: 21420, exit: 21415, qty: 3, pointValue: 2, fee: 9, risk: 300, rMultiple: 1.9, pnl: 681, strategy: "潛伏埋伏", reason: "潛伏量縮後突破", review: "完美執行,trail 出場", imgs: [] },
+  ];
+};
+
+export default function TradeJournal() {
+  const [trades, setTrades] = useState([]);
+  const [loaded, setLoaded] = useState(false);
+  // 啟動時從 IndexedDB 載入;若為空(首次使用)則灌入種子範例
+  useEffect(() => {
+    (async () => {
+      try {
+        let data = await dbGetAll();
+        if (!data || data.length === 0) {
+          const seeded = seed();
+          await dbBulkPut(seeded);
+          data = seeded;
+        }
+        setTrades(data);
+      } catch (e) {
+        console.error("載入失敗", e);
+      } finally {
+        setLoaded(true);
+      }
+    })();
+  }, []);
+  const [tab, setTab] = useState("dashboard"); // dashboard | calendar | new
+  const [curveScale, setCurveScale] = useState("history"); // day|week|year|history|custom
+  const [customRange, setCustomRange] = useState({ from: "", to: "" });
+  const [calMonth, setCalMonth] = useState(() => {
+    const t = new Date();
+    return { y: t.getFullYear(), m: t.getMonth() };
+  });
+  const [selectedDay, setSelectedDay] = useState(null);
+  const [lightbox, setLightbox] = useState(null); // 放大檢視的圖片 src
+  const [editing, setEditing] = useState(null);    // 正在編輯的交易物件
+
+  // ---------- 統計 ----------
+  const stats = useMemo(() => {
+    const closed = trades.filter((t) => typeof t.pnl === "number");
+    const n = closed.length;
+    const wins = closed.filter((t) => t.pnl > 0);
+    const losses = closed.filter((t) => t.pnl < 0);
+    const grossWin = wins.reduce((s, t) => s + t.pnl, 0);
+    const grossLoss = Math.abs(losses.reduce((s, t) => s + t.pnl, 0));
+    const winRate = n ? (wins.length / n) * 100 : 0;
+    const avgWin = wins.length ? grossWin / wins.length : 0;
+    const avgLoss = losses.length ? grossLoss / losses.length : 0;
+    const pf = grossLoss ? grossWin / grossLoss : grossWin > 0 ? Infinity : 0;
+    const totalPnl = closed.reduce((s, t) => s + t.pnl, 0);
+    // 期望值(以 R 計):平均每筆 R
+    const avgR = n ? closed.reduce((s, t) => s + (t.rMultiple || 0), 0) / n : 0;
+    const expectancyMoney = n ? totalPnl / n : 0;
+    return { n, winRate, pf, avgWin, avgLoss, totalPnl, avgR, expectancyMoney, wins: wins.length, losses: losses.length };
+  }, [trades]);
+
+  // ---------- 共用:依目前時間範圍判斷某日期是否落在範圍內 ----------
+  const inScope = useMemo(() => {
+    if (curveScale === "history") return () => true;
+    if (curveScale === "custom") {
+      const from = customRange.from || "0000-00-00";
+      const to = customRange.to || "9999-99-99";
+      return (date) => date >= from && date <= to;
+    }
+    const now = new Date();
+    const cutoff = new Date(now);
+    if (curveScale === "day") cutoff.setDate(now.getDate() - 1);
+    if (curveScale === "week") cutoff.setDate(now.getDate() - 7);
+    if (curveScale === "year") cutoff.setFullYear(now.getFullYear() - 1);
+    const cut = cutoff.toISOString().slice(0, 10);
+    return (date) => date >= cut;
+  }, [curveScale, customRange]);
+
+  // ---------- 權益曲線 ----------
+  const equityData = useMemo(() => {
+    const sorted = [...trades]
+      .filter((t) => typeof t.pnl === "number" && inScope(t.date))
+      .sort((a, b) => a.date.localeCompare(b.date));
+    let cum = 0;
+    return sorted.map((t) => {
+      cum += t.pnl;
+      return { date: t.date, equity: cum, pnl: t.pnl };
+    });
+  }, [trades, inScope]);
+
+  // ---------- 時間範圍篩選後的交易(供新圖表共用) ----------
+  const scopedTrades = useMemo(() => {
+    return trades.filter((t) => typeof t.pnl === "number" && inScope(t.date));
+  }, [trades, inScope]);
+
+  // ---------- 每日淨損益(長條)與每日淨累積(漸層面積) ----------
+  const dailyData = useMemo(() => {
+    const byDay = {};
+    scopedTrades.forEach((t) => {
+      byDay[t.date] = (byDay[t.date] || 0) + t.pnl;
+    });
+    const days = Object.keys(byDay).sort();
+    let cum = 0;
+    return days.map((d) => {
+      cum += byDay[d];
+      return { date: d, daily: Math.round(byDay[d] * 100) / 100, cum: Math.round(cum * 100) / 100 };
+    });
+  }, [scopedTrades]);
+
+  // ---------- 時段表現散點(依進場時間 0-24 小時) ----------
+  const timeScatter = useMemo(() => {
+    return scopedTrades
+      .filter((t) => t.time && /^\d{1,2}:\d{2}$/.test(t.time))
+      .map((t) => {
+        const [h, m] = t.time.split(":").map(Number);
+        return { hour: h + m / 60, pnl: t.pnl, symbol: t.symbol, win: t.pnl >= 0 };
+      });
+  }, [scopedTrades]);
+  const periodPnl = useMemo(() => {
+    const now = new Date();
+    const weekStart = new Date(now);
+    weekStart.setDate(now.getDate() - now.getDay()); // 週日起算
+    const ws = weekStart.toISOString().slice(0, 10);
+    const monStr = `${calMonth.y}-${String(calMonth.m + 1).padStart(2, "0")}`;
+    let week = 0, month = 0;
+    trades.forEach((t) => {
+      if (typeof t.pnl !== "number") return;
+      if (t.date >= ws) week += t.pnl;
+      if (t.date.startsWith(monStr)) month += t.pnl;
+    });
+    return { week, month };
+  }, [trades, calMonth]);
+
+  // ---------- 月曆 ----------
+  const calendar = useMemo(() => {
+    const { y, m } = calMonth;
+    const first = new Date(y, m, 1);
+    const startWeekday = first.getDay();
+    const daysInMonth = new Date(y, m + 1, 0).getDate();
+    const byDay = {};
+    trades.forEach((t) => {
+      if (typeof t.pnl !== "number") return;
+      if (t.date.startsWith(`${y}-${String(m + 1).padStart(2, "0")}`)) {
+        const day = parseInt(t.date.slice(8, 10), 10);
+        if (!byDay[day]) byDay[day] = { count: 0, pnl: 0 };
+        byDay[day].count += 1;
+        byDay[day].pnl += t.pnl;
+      }
+    });
+    const cells = [];
+    for (let i = 0; i < startWeekday; i++) cells.push(null);
+    for (let d = 1; d <= daysInMonth; d++) cells.push({ d, ...(byDay[d] || { count: 0, pnl: 0 }) });
+    return cells;
+  }, [trades, calMonth]);
+
+  const dayTrades = useMemo(() => {
+    if (!selectedDay) return [];
+    const ds = `${calMonth.y}-${String(calMonth.m + 1).padStart(2, "0")}-${String(selectedDay).padStart(2, "0")}`;
+    return trades.filter((t) => t.date === ds);
+  }, [selectedDay, calMonth, trades]);
+
+  const addTrade = async (t) => {
+    const rec = { ...t, id: Date.now() };
+    await dbPut(rec);
+    setTrades((prev) => [...prev, rec]);
+    setTab("dashboard");
+  };
+
+  const updateTrade = async (t) => {
+    await dbPut(t);
+    setTrades((prev) => prev.map((x) => (x.id === t.id ? t : x)));
+    setEditing(null);
+    setTab("dashboard");
+  };
+
+  const deleteTrade = async (id) => {
+    await dbDelete(id);
+    setTrades((prev) => prev.filter((x) => x.id !== id));
+    setEditing(null);
+    setTab("dashboard");
+  };
+
+  const startEdit = (t) => {
+    setEditing(t);
+    setTab("new");
+  };
+
+  const exportCsv = () => {
+    const cols = ["date","time","symbol","dir","strategy","entry","sl","tp","exit","qty","pointValue","fee","risk","rMultiple","pnl","reason","review"];
+    const rows = trades.map((t) => cols.map((c) => JSON.stringify(t[c] ?? "")).join(","));
+    const csv = [cols.join(","), ...rows].join("\n");
+    const blob = new Blob([csv], { type: "text/csv" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url; a.download = "trade-journal.csv"; a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const fileInputRef = useRef();
+  const importCsv = (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = async () => {
+      try {
+        const text = reader.result;
+        const lines = text.split(/\r?\n/).filter((l) => l.trim());
+        if (lines.length < 2) { alert("CSV 沒有資料列"); return; }
+        const cols = lines[0].split(",");
+        const numCols = ["entry","sl","tp","exit","qty","pointValue","fee","risk","rMultiple","pnl"];
+        const parsed = [];
+        for (let i = 1; i < lines.length; i++) {
+          // 簡易 CSV 解析(支援 JSON.stringify 包覆的欄位)
+          const vals = lines[i].match(/(\"(?:[^\"]|\"\")*\"|[^,]*)/g).filter((_, idx, arr) => idx < arr.length - 1 || arr[idx] !== "");
+          const obj = {};
+          cols.forEach((c, j) => {
+            let v = vals[j] != null ? vals[j] : "";
+            try { v = JSON.parse(v); } catch (_) {}
+            if (numCols.includes(c)) v = v === "" ? null : Number(v);
+            obj[c] = v;
+          });
+          obj.id = Date.now() + i;
+          obj.imgs = obj.imgs || [];
+          parsed.push(obj);
+        }
+        if (!confirm("匯入 " + parsed.length + " 筆交易?這會新增到現有紀錄(不會覆蓋)。")) return;
+        await dbBulkPut(parsed);
+        setTrades((prev) => [...prev, ...parsed]);
+        alert("已匯入 " + parsed.length + " 筆");
+      } catch (err) {
+        alert("匯入失敗,請確認是本 App 匯出的 CSV 格式");
+        console.error(err);
+      }
+    };
+    reader.readAsText(file);
+    e.target.value = "";
+  };
+
+  return (
+    <div style={{ background: BG, color: TEXT, minHeight: "100vh", fontFamily: "'IBM Plex Sans', system-ui, -apple-system, sans-serif", paddingBottom: 80 }}>
+      <style>{`
+        @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500;600&display=swap');
+        * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+        .mono { font-family: 'IBM Plex Mono', monospace; font-variant-numeric: tabular-nums; }
+        input, select, textarea { font-family: inherit; }
+        button { cursor: pointer; border: none; font-family: inherit; }
+        ::-webkit-scrollbar { width: 6px; height: 6px; }
+        ::-webkit-scrollbar-thumb { background: ${BORDER}; border-radius: 3px; }
+      `}</style>
+
+```
+  {/* Header */}
+  <div style={{ padding: "18px 18px 12px", borderBottom: `1px solid ${BORDER}`, position: "sticky", top: 0, background: BG, zIndex: 10 }}>
+    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
+      <div>
+        <div style={{ fontSize: 11, letterSpacing: 2, color: ACCENT, fontWeight: 600 }}>TRADE JOURNAL</div>
+        <div style={{ fontSize: 20, fontWeight: 600, marginTop: 2 }}>交易檢討日誌</div>
+      </div>
+      <div style={{ display: "flex", gap: 6 }}>
+        <button onClick={() => fileInputRef.current.click()} className="mono" style={{ background: PANEL2, color: MUTED, fontSize: 11, padding: "6px 10px", borderRadius: 6, border: `1px solid ${BORDER}` }}>匯入</button>
+        <button onClick={exportCsv} className="mono" style={{ background: PANEL2, color: MUTED, fontSize: 11, padding: "6px 10px", borderRadius: 6, border: `1px solid ${BORDER}` }}>匯出 CSV</button>
+        <input ref={fileInputRef} type="file" accept=".csv,text/csv" onChange={importCsv} style={{ display: "none" }} />
+      </div>
+    </div>
+  </div>
+
+  {/* Tabs */}
+  <div style={{ display: "flex", gap: 4, padding: "12px 18px 0" }}>
+    {[["dashboard","儀表板"],["calendar","月曆"],["new", editing ? "✎ 編輯" : "＋ 新增"]].map(([k,label]) => (
+      <button key={k} onClick={() => { if (k !== "new") setEditing(null); setTab(k); }} style={{
+        flex: 1, padding: "10px 0", fontSize: 13, fontWeight: 600, borderRadius: 8,
+        background: tab === k ? PANEL : "transparent",
+        color: tab === k ? TEXT : MUTED,
+        border: tab === k ? `1px solid ${BORDER}` : "1px solid transparent",
+      }}>{label}</button>
+    ))}
+  </div>
+
+  <div style={{ padding: 18 }}>
+    {tab === "dashboard" && (
+      <Dashboard stats={stats} periodPnl={periodPnl} equityData={equityData}
+        curveScale={curveScale} setCurveScale={setCurveScale} trades={trades}
+        customRange={customRange} setCustomRange={setCustomRange}
+        dailyData={dailyData} timeScatter={timeScatter}
+        onImgClick={setLightbox} onEdit={startEdit} />
+    )}
+    {tab === "calendar" && (
+      <Calendar calMonth={calMonth} setCalMonth={setCalMonth} calendar={calendar}
+        periodPnl={periodPnl} selectedDay={selectedDay} setSelectedDay={setSelectedDay} dayTrades={dayTrades}
+        onImgClick={setLightbox} onEdit={startEdit} />
+    )}
+    {tab === "new" && (
+      <NewTrade onAdd={addTrade} editing={editing} onUpdate={updateTrade}
+        onDelete={deleteTrade} onCancel={() => { setEditing(null); setTab("dashboard"); }} />
+    )}
+  </div>
+
+  {/* Lightbox 圖片放大 */}
+  {lightbox && (
+    <div onClick={() => setLightbox(null)} style={{
+      position: "fixed", inset: 0, background: "rgba(0,0,0,0.92)", zIndex: 100,
+      display: "flex", alignItems: "center", justifyContent: "center", padding: 16,
+    }}>
+      <img src={lightbox} alt="放大" style={{ maxWidth: "100%", maxHeight: "100%", borderRadius: 8, objectFit: "contain" }} />
+      <button onClick={() => setLightbox(null)} style={{
+        position: "fixed", top: 16, right: 16, background: "rgba(255,255,255,0.15)", color: "#fff",
+        width: 40, height: 40, borderRadius: "50%", fontSize: 22, lineHeight: "38px",
+      }}>×</button>
+    </div>
+  )}
+</div>
+```
+
+);
+}
+
+// ============================================================
+function StatCard({ label, value, sub, color }) {
+return (
+<div style={{ background: PANEL, border: `1px solid ${BORDER}`, borderRadius: 10, padding: “12px 14px” }}>
+<div style={{ fontSize: 10, letterSpacing: 1, color: MUTED, textTransform: “uppercase” }}>{label}</div>
+<div className=“mono” style={{ fontSize: 22, fontWeight: 600, color: color || TEXT, marginTop: 4 }}>{value}</div>
+{sub && <div className=“mono” style={{ fontSize: 11, color: MUTED, marginTop: 2 }}>{sub}</div>}
+</div>
+);
+}
+
+function Dashboard({ stats, periodPnl, equityData, curveScale, setCurveScale, trades, customRange, setCustomRange, dailyData, timeScatter, onImgClick, onEdit }) {
+const recent = […trades].sort((a, b) => b.date.localeCompare(a.date)).slice(0, 6);
+const hasDaily = dailyData.length > 0;
+const inp2 = { background: PANEL2, border: `1px solid ${BORDER}`, borderRadius: 6, color: TEXT, padding: “6px 8px”, fontSize: 12, width: “100%” };
+return (
+<div style={{ display: “flex”, flexDirection: “column”, gap: 16 }}>
+{/* 累積損益大數字 */}
+<div style={{ background: PANEL, border: `1px solid ${BORDER}`, borderRadius: 12, padding: “16px 18px” }}>
+<div style={{ fontSize: 10, letterSpacing: 1, color: MUTED, textTransform: “uppercase” }}>累積損益</div>
+<div className=“mono” style={{ fontSize: 32, fontWeight: 600, color: pnlColor(stats.totalPnl), marginTop: 4 }}>{fmtMoney(stats.totalPnl)}</div>
+<div style={{ display: “flex”, gap: 20, marginTop: 8 }}>
+<span className=“mono” style={{ fontSize: 12, color: MUTED }}>本週 <span style={{ color: pnlColor(periodPnl.week) }}>{fmtMoney(periodPnl.week)}</span></span>
+<span className=“mono” style={{ fontSize: 12, color: MUTED }}>本月 <span style={{ color: pnlColor(periodPnl.month) }}>{fmtMoney(periodPnl.month)}</span></span>
+</div>
+</div>
+
+```
+  {/* 時間範圍切換(統管以下三圖) */}
+  <div>
+    <div style={{ display: "flex", gap: 2, justifyContent: "flex-end", flexWrap: "wrap" }}>
+      {[["day","日"],["week","週"],["year","年"],["history","歷史"],["custom","自訂"]].map(([k,l]) => (
+        <button key={k} onClick={() => setCurveScale(k)} className="mono" style={{
+          fontSize: 11, padding: "5px 12px", borderRadius: 6,
+          background: curveScale === k ? ACCENT : PANEL2,
+          color: curveScale === k ? "#000" : MUTED, fontWeight: 600,
+        }}>{l}</button>
+      ))}
+    </div>
+    {curveScale === "custom" && (
+      <div style={{ display: "flex", gap: 8, alignItems: "center", marginTop: 8 }}>
+        <input type="text" inputMode="numeric" placeholder="起 2025-09-01" value={customRange.from}
+          onChange={(e) => setCustomRange((p) => ({ ...p, from: e.target.value }))} style={inp2} />
+        <span style={{ color: MUTED, fontSize: 12 }}>→</span>
+        <input type="text" inputMode="numeric" placeholder="迄 2026-06-26" value={customRange.to}
+          onChange={(e) => setCustomRange((p) => ({ ...p, to: e.target.value }))} style={inp2} />
+      </div>
+    )}
+  </div>
+
+  {/* 圖一:每日淨累積損益(漸層面積) */}
+  <div style={{ background: PANEL, border: `1px solid ${BORDER}`, borderRadius: 12, padding: "14px 14px 6px" }}>
+    <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 8 }}>每日淨累積損益</div>
+    <ResponsiveContainer width="100%" height={180}>
+      <AreaChart data={dailyData} margin={{ top: 6, right: 6, left: -18, bottom: 0 }}>
+        <defs>
+          <linearGradient id="gradPos" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" stopColor={PROFIT_COLOR} stopOpacity={0.35} />
+            <stop offset="100%" stopColor={PROFIT_COLOR} stopOpacity={0} />
+          </linearGradient>
+          <linearGradient id="gradNeg" x1="0" y1="1" x2="0" y2="0">
+            <stop offset="0%" stopColor={LOSS_COLOR} stopOpacity={0.35} />
+            <stop offset="100%" stopColor={LOSS_COLOR} stopOpacity={0} />
+          </linearGradient>
+        </defs>
+        <XAxis dataKey="date" tick={{ fontSize: 9, fill: MUTED }} tickFormatter={(d) => d.slice(5)} minTickGap={24} axisLine={{ stroke: BORDER }} tickLine={false} />
+        <YAxis tick={{ fontSize: 9, fill: MUTED }} tickFormatter={(v) => Math.abs(v) >= 1000 ? (v / 1000).toFixed(1) + "k" : v.toFixed(0)} axisLine={false} tickLine={false} />
+        <Tooltip contentStyle={{ background: PANEL2, border: `1px solid ${BORDER}`, borderRadius: 8, fontSize: 12 }}
+          labelStyle={{ color: MUTED }} formatter={(v) => [fmtMoney(v), "累積"]} />
+        <ReferenceLine y={0} stroke={BORDER} />
+        <Area type="monotone" dataKey="cum" stroke={ACCENT} strokeWidth={2}
+          fill={dailyData.length && dailyData[dailyData.length - 1].cum >= 0 ? "url(#gradPos)" : "url(#gradNeg)"} dot={false} />
+      </AreaChart>
+    </ResponsiveContainer>
+    {!hasDaily && <div style={{ textAlign: "center", color: MUTED, fontSize: 12, padding: "20px 0" }}>此區間沒有交易紀錄</div>}
+  </div>
+
+  {/* 圖二:每日淨損益(長條) */}
+  <div style={{ background: PANEL, border: `1px solid ${BORDER}`, borderRadius: 12, padding: "14px 14px 6px" }}>
+    <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 8 }}>每日淨損益</div>
+    <ResponsiveContainer width="100%" height={180}>
+      <BarChart data={dailyData} margin={{ top: 6, right: 6, left: -18, bottom: 0 }}>
+        <XAxis dataKey="date" tick={{ fontSize: 9, fill: MUTED }} tickFormatter={(d) => d.slice(5)} minTickGap={24} axisLine={{ stroke: BORDER }} tickLine={false} />
+        <YAxis tick={{ fontSize: 9, fill: MUTED }} tickFormatter={(v) => Math.abs(v) >= 1000 ? (v / 1000).toFixed(1) + "k" : v.toFixed(0)} axisLine={false} tickLine={false} />
+        <Tooltip contentStyle={{ background: PANEL2, border: `1px solid ${BORDER}`, borderRadius: 8, fontSize: 12 }}
+          labelStyle={{ color: MUTED }} formatter={(v) => [fmtMoney(v), "當日"]} cursor={{ fill: "rgba(255,255,255,0.04)" }} />
+        <ReferenceLine y={0} stroke={BORDER} />
+        <Bar dataKey="daily" radius={[2, 2, 0, 0]}>
+          {dailyData.map((d, i) => <Cell key={i} fill={d.daily >= 0 ? PROFIT_COLOR : LOSS_COLOR} />)}
+        </Bar>
+      </BarChart>
+    </ResponsiveContainer>
+    {!hasDaily && <div style={{ textAlign: "center", color: MUTED, fontSize: 12, padding: "20px 0" }}>此區間沒有交易紀錄</div>}
+  </div>
+
+  {/* 圖三:交易時段表現(散點) */}
+  <div style={{ background: PANEL, border: `1px solid ${BORDER}`, borderRadius: 12, padding: "14px 14px 6px" }}>
+    <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 2 }}>交易時段表現</div>
+    <div style={{ fontSize: 11, color: MUTED, marginBottom: 8 }}>每點一筆交易,依進場時間分布</div>
+    <ResponsiveContainer width="100%" height={200}>
+      <ScatterChart margin={{ top: 6, right: 6, left: -18, bottom: 0 }}>
+        <XAxis type="number" dataKey="hour" domain={[0, 24]} ticks={[0, 4, 8, 12, 16, 20, 24]}
+          tick={{ fontSize: 9, fill: MUTED }} tickFormatter={(h) => `${String(h).padStart(2, "0")}:00`}
+          axisLine={{ stroke: BORDER }} tickLine={false} />
+        <YAxis type="number" dataKey="pnl" tick={{ fontSize: 9, fill: MUTED }}
+          tickFormatter={(v) => Math.abs(v) >= 1000 ? (v / 1000).toFixed(1) + "k" : v.toFixed(0)} axisLine={false} tickLine={false} />
+        <ZAxis range={[40, 40]} />
+        <Tooltip contentStyle={{ background: PANEL2, border: `1px solid ${BORDER}`, borderRadius: 8, fontSize: 12 }}
+          labelStyle={{ color: MUTED }} cursor={{ strokeDasharray: "3 3", stroke: BORDER }}
+          formatter={(v, n) => n === "pnl" ? [fmtMoney(v), "損益"] : [v, n]} />
+        <ReferenceLine y={0} stroke={BORDER} />
+        <Scatter data={timeScatter} fillOpacity={0.65}>
+          {timeScatter.map((d, i) => <Cell key={i} fill={d.win ? PROFIT_COLOR : LOSS_COLOR} />)}
+        </Scatter>
+      </ScatterChart>
+    </ResponsiveContainer>
+    {timeScatter.length === 0 && <div style={{ textAlign: "center", color: MUTED, fontSize: 12, padding: "16px 0" }}>新增交易時填寫「進場時間」即可在此顯示</div>}
+  </div>
+
+  {/* 統計指標 */}
+  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+    <StatCard label="勝率" value={stats.winRate.toFixed(1) + "%"} sub={`${stats.wins}勝 / ${stats.losses}敗`} />
+    <StatCard label="獲利因子" value={stats.pf === Infinity ? "∞" : stats.pf.toFixed(2)} sub={`${stats.n} 筆已平倉`} color={stats.pf >= 1.5 ? PROFIT_COLOR : stats.pf >= 1 ? TEXT : LOSS_COLOR} />
+    <StatCard label="期望值 / 筆" value={fmtR(stats.avgR)} sub={fmtMoney(stats.expectancyMoney) + " / 筆"} color={pnlColor(stats.avgR)} />
+    <StatCard label="平均盈 / 虧" value={fmtMoney(stats.avgWin).replace("US$","")} sub={"虧 " + fmtMoney(-stats.avgLoss).replace("US$","")} />
+  </div>
+
+  {/* 近期交易 */}
+  <div>
+    <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 8 }}>近期交易</div>
+    <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+      {recent.map((t) => <TradeRow key={t.id} t={t} onImgClick={onImgClick} onEdit={onEdit} />)}
+    </div>
+  </div>
+</div>
+```
+
+);
+}
+
+function TradeRow({ t, onImgClick, onEdit }) {
+const [open, setOpen] = useState(false);
+return (
+<div style={{ background: PANEL, border: `1px solid ${BORDER}`, borderRadius: 10, overflow: “hidden” }}>
+<button onClick={() => setOpen(!open)} style={{ width: “100%”, background: “transparent”, color: TEXT, padding: “10px 14px”, display: “flex”, justifyContent: “space-between”, alignItems: “center”, textAlign: “left” }}>
+<div style={{ display: “flex”, alignItems: “center”, gap: 10 }}>
+<span style={{ fontSize: 10, padding: “2px 6px”, borderRadius: 4, background: t.dir === “多” ? profitBg(0.15) : lossBg(0.15), color: t.dir === “多” ? PROFIT_COLOR : LOSS_COLOR, fontWeight: 600 }}>{t.dir}</span>
+<span style={{ fontWeight: 600, fontSize: 14 }}>{t.symbol}</span>
+<span className=“mono” style={{ fontSize: 11, color: MUTED }}>{t.strategy}</span>
+</div>
+<div style={{ textAlign: “right” }}>
+<div className=“mono” style={{ color: pnlColor(t.pnl), fontWeight: 600, fontSize: 14 }}>{fmtMoney(t.pnl)}</div>
+<div className=“mono” style={{ fontSize: 11, color: MUTED }}>{fmtR(t.rMultiple)} · {t.date.slice(5)}</div>
+</div>
+</button>
+{open && (
+<div style={{ padding: “0 14px 12px”, borderTop: `1px solid ${BORDER}` }}>
+<div className=“mono” style={{ fontSize: 12, color: MUTED, display: “flex”, gap: 14, flexWrap: “wrap”, padding: “10px 0” }}>
+{t.time && <span>⏱ {t.time}</span>}
+<span>進 {t.entry}</span><span>損 {t.sl}</span><span>利 {t.tp}</span><span>出 {t.exit}</span>
+{t.qty != null && <span>{t.qty}口 ×{t.pointValue}</span>}
+{t.fee != null && <span>費 {t.fee}</span>}
+</div>
+{t.imgs && t.imgs.length > 0 && (
+<div style={{ display: “flex”, gap: 8, overflowX: “auto”, paddingBottom: 8, marginBottom: 6, scrollSnapType: “x mandatory” }}>
+{t.imgs.map((src, i) => (
+<img key={i} src={src} alt={“setup” + i} onClick={() => onImgClick && onImgClick(src)}
+style={{ height: 160, borderRadius: 8, border: `1px solid ${BORDER}`, scrollSnapAlign: “start”, flexShrink: 0, cursor: “zoom-in” }} />
+))}
+</div>
+)}
+{t.reason && <div style={{ marginBottom: 8 }}><span style={{ fontSize: 10, color: ACCENT, letterSpacing: 1 }}>進場理由</span><div style={{ fontSize: 13, marginTop: 2 }}>{t.reason}</div></div>}
+{t.review && <div style={{ marginBottom: 10 }}><span style={{ fontSize: 10, color: ACCENT, letterSpacing: 1 }}>檢討</span><div style={{ fontSize: 13, marginTop: 2 }}>{t.review}</div></div>}
+<button onClick={() => onEdit && onEdit(t)} style={{ background: PANEL2, color: TEXT, fontSize: 12, fontWeight: 600, padding: “8px 16px”, borderRadius: 7, border: `1px solid ${BORDER}` }}>✎ 編輯這筆</button>
+</div>
+)}
+</div>
+);
+}
+
+function Calendar({ calMonth, setCalMonth, calendar, periodPnl, selectedDay, setSelectedDay, dayTrades, onImgClick, onEdit }) {
+const nav = (delta) => {
+setSelectedDay(null);
+let { y, m } = calMonth;
+m += delta;
+if (m < 0) { m = 11; y -= 1; }
+if (m > 11) { m = 0; y += 1; }
+setCalMonth({ y, m });
+};
+const weekdays = [“日”,“一”,“二”,“三”,“四”,“五”,“六”];
+return (
+<div style={{ display: “flex”, flexDirection: “column”, gap: 14 }}>
+<div style={{ display: “flex”, justifyContent: “space-between”, alignItems: “center” }}>
+<button onClick={() => nav(-1)} className=“mono” style={{ background: PANEL2, color: TEXT, padding: “6px 12px”, borderRadius: 6, border: `1px solid ${BORDER}` }}>‹</button>
+<div style={{ textAlign: “center” }}>
+<div className=“mono” style={{ fontSize: 16, fontWeight: 600 }}>{calMonth.y}年 {calMonth.m + 1}月</div>
+<div className=“mono” style={{ fontSize: 12, color: pnlColor(periodPnl.month) }}>本月 {fmtMoney(periodPnl.month)}</div>
+</div>
+<button onClick={() => nav(1)} className=“mono” style={{ background: PANEL2, color: TEXT, padding: “6px 12px”, borderRadius: 6, border: `1px solid ${BORDER}` }}>›</button>
+</div>
+
+```
+  <div style={{ display: "grid", gridTemplateColumns: "repeat(7,1fr)", gap: 4 }}>
+    {weekdays.map((w) => <div key={w} style={{ textAlign: "center", fontSize: 11, color: MUTED, padding: "2px 0" }}>{w}</div>)}
+    {calendar.map((c, i) => {
+      if (!c) return <div key={i} />;
+      const has = c.count > 0;
+      const sel = selectedDay === c.d;
+      return (
+        <button key={i} onClick={() => setSelectedDay(has ? c.d : null)} style={{
+          aspectRatio: "1", borderRadius: 8, padding: 3, display: "flex", flexDirection: "column",
+          justifyContent: "space-between", alignItems: "stretch",
+          background: has ? (c.pnl > 0 ? profitBg(0.13) : lossBg(0.13)) : PANEL,
+          border: sel ? `1.5px solid ${ACCENT}` : `1px solid ${has ? (c.pnl > 0 ? profitBg(0.4) : lossBg(0.4)) : BORDER}`,
+        }}>
+          <span className="mono" style={{ fontSize: 11, color: MUTED, textAlign: "left" }}>{c.d}</span>
+          {has && <>
+            <span className="mono" style={{ fontSize: 11, fontWeight: 600, color: pnlColor(c.pnl) }}>{(c.pnl >= 0 ? "+" : "−") + Math.abs(Math.round(c.pnl)).toLocaleString()}</span>
+            <span className="mono" style={{ fontSize: 9, color: MUTED, textAlign: "right" }}>{c.count}筆</span>
+          </>}
+        </button>
+      );
+    })}
+  </div>
+
+  {selectedDay && (
+    <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+      <div style={{ fontSize: 13, fontWeight: 600 }}>{calMonth.m + 1}/{selectedDay} 當日交易</div>
+      {dayTrades.map((t) => <TradeRow key={t.id} t={t} onImgClick={onImgClick} onEdit={onEdit} />)}
+    </div>
+  )}
+</div>
+```
+
+);
+}
+
+function NewTrade({ onAdd, editing, onUpdate, onDelete, onCancel }) {
+const isEdit = !!editing;
+const blank = {
+date: new Date().toISOString().slice(0, 10), time: “”, symbol: “”, dir: “多”, strategy: “”,
+entry: “”, sl: “”, tp: “”, exit: “”, qty: “”, pointValue: “”, fee: “”,
+reason: “”, review: “”, imgs: [],
+};
+// 編輯時把數字轉回字串填回表單
+const [f, setF] = useState(() => {
+if (!editing) return blank;
+const toStr = (v) => (v == null ? “” : String(v));
+return {
+date: editing.date, time: editing.time || “”, symbol: editing.symbol || “”, dir: editing.dir || “多”,
+strategy: editing.strategy || “”, entry: toStr(editing.entry), sl: toStr(editing.sl),
+tp: toStr(editing.tp), exit: toStr(editing.exit), qty: toStr(editing.qty),
+pointValue: toStr(editing.pointValue), fee: toStr(editing.fee),
+reason: editing.reason || “”, review: editing.review || “”, imgs: editing.imgs || [],
+};
+});
+const fileRef = useRef();
+const set = (k, v) => setF((p) => ({ …p, [k]: v }));
+
+const onImg = (e) => {
+const files = Array.from(e.target.files);
+files.forEach((file) => {
+const reader = new FileReader();
+reader.onload = () => setF((p) => ({ …p, imgs: […p.imgs, reader.result] }));
+reader.readAsDataURL(file);
+});
+e.target.value = “”;
+};
+const removeImg = (i) => setF((p) => ({ …p, imgs: p.imgs.filter((_, idx) => idx !== i) }));
+
+const entry = parseFloat(f.entry), sl = parseFloat(f.sl), exit = parseFloat(f.exit);
+const qty = parseFloat(f.qty), pv = parseFloat(f.pointValue), fee = parseFloat(f.fee) || 0;
+const dir = f.dir === “多” ? 1 : -1;
+
+// 損益 =(出場 − 進場)× 方向 × 口數 × 點值 − 手續費
+const pnl = useMemo(() => {
+if ([entry, exit, qty, pv].some(isNaN)) return null;
+return (exit - entry) * dir * qty * pv - fee;
+}, [entry, exit, qty, pv, fee, dir]);
+
+// 風險額 =|進場 − 停損|× 口數 × 點值
+const risk = useMemo(() => {
+if ([entry, sl, qty, pv].some(isNaN)) return null;
+return Math.abs(entry - sl) * qty * pv;
+}, [entry, sl, qty, pv]);
+
+const rMultiple = useMemo(() => {
+if (pnl == null || risk == null || risk === 0) return null;
+return pnl / risk;
+}, [pnl, risk]);
+
+const submit = () => {
+if (!f.symbol) { alert(“請輸入商品”); return; }
+if (pnl == null) { alert(“請填進場、出場、口數、點值,才能算損益”); return; }
+const payload = {
+…f,
+entry: entry || null, sl: sl || null, tp: parseFloat(f.tp) || null, exit: exit || null,
+qty: qty || null, pointValue: pv || null, fee,
+risk: risk ?? null, pnl: Math.round(pnl * 100) / 100, rMultiple: rMultiple ?? 0,
+};
+if (isEdit) onUpdate({ …payload, id: editing.id });
+else onAdd(payload);
+};
+
+const inp = { width: “100%”, background: PANEL2, border: `1px solid ${BORDER}`, borderRadius: 8, color: TEXT, padding: “10px 12px”, fontSize: 14, marginTop: 4 };
+const lbl = { fontSize: 11, color: MUTED, letterSpacing: 0.5 };
+
+return (
+<div style={{ display: “flex”, flexDirection: “column”, gap: 12 }}>
+<div style={{ display: “grid”, gridTemplateColumns: “1.2fr 1fr 0.8fr”, gap: 10 }}>
+<div style={{ minWidth: 0 }}><div style={lbl}>日期</div>
+<input type=“text” inputMode=“numeric” placeholder=“2026-06-26” value={f.date} onChange={(e) => set(“date”, e.target.value)} style={inp} /></div>
+<div style={{ minWidth: 0 }}><div style={lbl}>進場時間</div>
+<input type=“text” inputMode=“numeric” placeholder=“21:30” value={f.time} onChange={(e) => set(“time”, e.target.value)} style={inp} /></div>
+<div style={{ minWidth: 0 }}><div style={lbl}>方向</div>
+<select value={f.dir} onChange={(e) => set(“dir”, e.target.value)} style={inp}><option>多</option><option>空</option></select>
+</div>
+</div>
+
+```
+  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+    <div style={{ minWidth: 0 }}><div style={lbl}>商品</div><input placeholder="XAUUSD / MNQ" value={f.symbol} onChange={(e) => set("symbol", e.target.value)} style={inp} /></div>
+    <div style={{ minWidth: 0 }}><div style={lbl}>策略</div><input placeholder="SNR / ICT" value={f.strategy} onChange={(e) => set("strategy", e.target.value)} style={inp} /></div>
+    <div style={{ minWidth: 0 }}><div style={lbl}>口數</div><input type="number" inputMode="decimal" value={f.qty} onChange={(e) => set("qty", e.target.value)} style={inp} /></div>
+    <div style={{ minWidth: 0 }}><div style={lbl}>點值 (每點/口)</div><input type="number" inputMode="decimal" value={f.pointValue} onChange={(e) => set("pointValue", e.target.value)} style={inp} /></div>
+    <div style={{ minWidth: 0 }}><div style={lbl}>進場價</div><input type="number" inputMode="decimal" value={f.entry} onChange={(e) => set("entry", e.target.value)} style={inp} /></div>
+    <div style={{ minWidth: 0 }}><div style={lbl}>出場價</div><input type="number" inputMode="decimal" value={f.exit} onChange={(e) => set("exit", e.target.value)} style={inp} /></div>
+    <div style={{ minWidth: 0 }}><div style={lbl}>停損價</div><input type="number" inputMode="decimal" value={f.sl} onChange={(e) => set("sl", e.target.value)} style={inp} /></div>
+    <div style={{ minWidth: 0 }}><div style={lbl}>停利價 (TP)</div><input type="number" inputMode="decimal" value={f.tp} onChange={(e) => set("tp", e.target.value)} style={inp} /></div>
+    <div style={{ minWidth: 0 }}><div style={lbl}>手續費 (總額)</div><input type="number" inputMode="decimal" value={f.fee} onChange={(e) => set("fee", e.target.value)} style={inp} /></div>
+  </div>
+
+  {/* 自動計算結果 */}
+  <div style={{ background: PANEL, borderRadius: 10, border: `1px solid ${BORDER}`, padding: "12px 14px", display: "flex", justifyContent: "space-around", textAlign: "center" }}>
+    <div>
+      <div style={{ fontSize: 10, color: MUTED, letterSpacing: 1 }}>損益</div>
+      <div className="mono" style={{ fontSize: 18, fontWeight: 600, color: pnl == null ? MUTED : pnlColor(pnl), marginTop: 2 }}>{pnl == null ? "—" : fmtMoney(pnl)}</div>
+    </div>
+    <div style={{ width: 1, background: BORDER }} />
+    <div>
+      <div style={{ fontSize: 10, color: MUTED, letterSpacing: 1 }}>風險額</div>
+      <div className="mono" style={{ fontSize: 18, fontWeight: 600, marginTop: 2 }}>{risk == null ? "—" : "US$" + risk.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
+    </div>
+    <div style={{ width: 1, background: BORDER }} />
+    <div>
+      <div style={{ fontSize: 10, color: MUTED, letterSpacing: 1 }}>實際 R</div>
+      <div className="mono" style={{ fontSize: 18, fontWeight: 600, color: rMultiple == null ? MUTED : pnlColor(rMultiple), marginTop: 2 }}>{rMultiple == null ? "—" : fmtR(rMultiple)}</div>
+    </div>
+  </div>
+
+  <div><div style={lbl}>進場理由</div>
+    <textarea rows={2} placeholder="為什麼進場?符合哪些 setup 條件?" value={f.reason} onChange={(e) => set("reason", e.target.value)} style={{ ...inp, resize: "vertical" }} /></div>
+  <div><div style={lbl}>檢討</div>
+    <textarea rows={3} placeholder="執行得如何?有沒有違反規則?下次改什麼?" value={f.review} onChange={(e) => set("review", e.target.value)} style={{ ...inp, resize: "vertical" }} /></div>
+
+  <div>
+    <div style={lbl}>截圖(可多張:進場前 / 進場 / 出場復盤)</div>
+    <button onClick={() => fileRef.current.click()} style={{ width: "100%", background: PANEL2, color: MUTED, border: `1px dashed ${BORDER}`, borderRadius: 8, padding: "14px", fontSize: 13, marginTop: 4 }}>
+      ＋ 上傳截圖(可一次選多張)
+    </button>
+    <input ref={fileRef} type="file" accept="image/*" multiple onChange={onImg} style={{ display: "none" }} />
+    {f.imgs.length > 0 && (
+      <div style={{ display: "flex", gap: 8, overflowX: "auto", marginTop: 8, paddingBottom: 6 }}>
+        {f.imgs.map((src, i) => (
+          <div key={i} style={{ position: "relative", flexShrink: 0 }}>
+            <img src={src} alt={"preview" + i} style={{ height: 120, borderRadius: 8, border: `1px solid ${BORDER}` }} />
+            <button onClick={() => removeImg(i)} style={{ position: "absolute", top: 4, right: 4, background: "rgba(0,0,0,0.7)", color: "#fff", borderRadius: "50%", width: 22, height: 22, fontSize: 14, lineHeight: "20px" }}>×</button>
+          </div>
+        ))}
+      </div>
+    )}
+  </div>
+
+  <button onClick={submit} style={{ background: ACCENT, color: "#000", fontWeight: 600, fontSize: 15, padding: "14px", borderRadius: 10, marginTop: 4 }}>{isEdit ? "更新交易" : "儲存交易"}</button>
+  {isEdit && (
+    <div style={{ display: "flex", gap: 10 }}>
+      <button onClick={onCancel} style={{ flex: 1, background: PANEL2, color: TEXT, fontWeight: 600, fontSize: 14, padding: "12px", borderRadius: 10, border: `1px solid ${BORDER}` }}>取消</button>
+      <button onClick={() => { if (confirm("確定刪除這筆交易?")) onDelete(editing.id); }} style={{ flex: 1, background: "transparent", color: LOSS_COLOR, fontWeight: 600, fontSize: 14, padding: "12px", borderRadius: 10, border: `1px solid ${LOSS_COLOR}` }}>刪除</button>
+    </div>
+  )}
+</div>
+```
+
+);
+}
+
+// ============================================================
+// 掛載
+// ============================================================
+const rootEl = document.getElementById(“root”);
+ReactDOM.createRoot(rootEl).render(<TradeJournal />);
+
+</script>
+</body>
+</html>
