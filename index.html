@@ -26,14 +26,22 @@
   #root { padding-top: env(safe-area-inset-top); padding-bottom: env(safe-area-inset-bottom); }
 </style>
 <script>
-// 全域錯誤監聽:任何錯誤(含 babel 編譯失敗)都顯示出來,不靜默卡住
-window.addEventListener("error", function (e) {
+// 全域錯誤監聽:任何錯誤都顯示出來
+function showErr(title, detail) {
   var root = document.getElementById("root");
-  // 只在還停留在載入畫面時覆蓋(避免蓋掉已正常運作的 App)
   if (root && document.getElementById("loadstatus")) {
-    root.innerHTML = '<div style="color:#e8482b;font-family:monospace;padding:40px 20px;font-size:12px;white-space:pre-wrap;">發生錯誤:\n' +
-      (e.message || "未知") + '\n\n' + (e.filename || "") + (e.lineno ? " 第" + e.lineno + "行" : "") + '</div>';
+    root.innerHTML = '<div style="color:#e8482b;font-family:monospace;padding:40px 20px;font-size:12px;white-space:pre-wrap;word-break:break-word;">' +
+      title + '\n' + detail + '</div>';
   }
+}
+window.addEventListener("error", function (e) {
+  var d = (e.message || "未知");
+  if (e.error && e.error.stack) d += "\n\n" + e.error.stack;
+  if (e.filename) d += "\n\n" + e.filename + (e.lineno ? " 第" + e.lineno + "行" : "");
+  showErr("發生錯誤:", d);
+});
+window.addEventListener("unhandledrejection", function (e) {
+  showErr("Promise 錯誤:", (e.reason && e.reason.message) ? e.reason.message : String(e.reason));
 });
 </script>
 </head>
@@ -166,7 +174,7 @@ async function dbBulkPut(trades) {
 }
 </script>
 
-<script type="text/babel" data-presets="react">
+<script type="text/plain" id="app-source">
 const { useState, useMemo, useRef, useEffect } = React;
 const {
   LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, ReferenceLine,
@@ -913,6 +921,35 @@ ReactDOM.createRoot(rootEl).render(<TradeJournal />);
 rootEl.innerHTML = ‘<div style="color:#e8482b;font-family:monospace;padding:40px 20px;font-size:13px;white-space:pre-wrap;">渲染錯誤:\n’ + (err && err.message ? err.message : String(err)) + ‘</div>’;
 }
 
+</script>
+<script>
+// 等所有外部元件就緒後,手動編譯 app 原始碼(可精準捕捉編譯錯誤)
+(function () {
+  function ready() {
+    var l = window.__libsLoaded;
+    return l.react && l.dom && l.proptypes && l.recharts && l.babel && window.Babel;
+  }
+  function run() {
+    try {
+      var src = document.getElementById("app-source").textContent;
+      var out = Babel.transform(src, { presets: ["react"] }).code;
+      if (window.__loadTimeout) clearTimeout(window.__loadTimeout);
+      // 執行編譯後的程式碼
+      (0, eval)(out);
+    } catch (err) {
+      var root = document.getElementById("root");
+      root.innerHTML = '<div style="color:#e8482b;font-family:monospace;padding:40px 20px;font-size:12px;white-space:pre-wrap;word-break:break-word;">編譯/執行錯誤:\n' +
+        (err && err.message ? err.message : String(err)) +
+        (err && err.stack ? '\n\n' + err.stack : '') + '</div>';
+    }
+  }
+  var tries = 0;
+  var iv = setInterval(function () {
+    tries++;
+    if (ready()) { clearInterval(iv); run(); }
+    else if (tries > 150) { clearInterval(iv); } // 30秒放棄,交給逾時畫面
+  }, 200);
+})();
 </script>
 </body>
 </html>
