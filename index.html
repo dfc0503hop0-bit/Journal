@@ -204,6 +204,30 @@ function fmtAxis(v) {
   return Math.abs(v) >= 1000 ? (v / 1000).toFixed(1) + "k" : Math.round(v).toString();
 }
 
+// 互動 hook:回傳目前選中的資料點索引與事件處理
+function useChartHover(dataLength, toIndexFromX) {
+  const [active, setActive] = useState(null);
+  const svgRef = useRef(null);
+  const handle = (clientX) => {
+    const svg = svgRef.current;
+    if (!svg) return;
+    const rect = svg.getBoundingClientRect();
+    // 把螢幕 x 換算成 viewBox 座標
+    const vbX = ((clientX - rect.left) / rect.width) * CHART_W;
+    const idx = toIndexFromX(vbX);
+    if (idx != null && idx >= 0 && idx < dataLength) setActive(idx);
+  };
+  const onTouchMove = (e) => { if (e.touches[0]) { handle(e.touches[0].clientX); } };
+  const onTouchStart = (e) => { if (e.touches[0]) { handle(e.touches[0].clientX); } };
+  const onMouseMove = (e) => handle(e.clientX);
+  const clear = () => setActive(null);
+  return { active, svgRef, bind: {
+    onTouchStart, onTouchMove, onTouchEnd: clear,
+    onMouseMove, onMouseLeave: clear,
+    style: { touchAction: "pan-y" },
+  }};
+}
+
 // 折線+漸層面積圖(每日淨累積)
 function AreaLineChart({ data, color }) {
   if (!data.length) return <div style={{ textAlign: "center", color: MUTED, fontSize: 12, padding: "30px 0" }}>此區間沒有交易紀錄</div>;
@@ -211,13 +235,20 @@ function AreaLineChart({ data, color }) {
   const { min, max, toY, zeroY } = yScale(vals, CHART_H);
   const innerW = CHART_W - PAD_L - PAD_R;
   const toX = (i) => PAD_L + (data.length === 1 ? innerW / 2 : innerW * i / (data.length - 1));
+  const toIndexFromX = (vbX) => {
+    if (data.length === 1) return 0;
+    const i = Math.round((vbX - PAD_L) / (innerW / (data.length - 1)));
+    return Math.max(0, Math.min(data.length - 1, i));
+  };
+  const { active, svgRef, bind } = useChartHover(data.length, toIndexFromX);
   const linePts = data.map((d, i) => `${toX(i)},${toY(d.cum)}`).join(" ");
   const lastPos = data[data.length - 1].cum >= 0;
   const areaFill = lastPos ? color.profit : color.loss;
   const areaPath = `M ${toX(0)},${zeroY} L ` + data.map((d, i) => `${toX(i)},${toY(d.cum)}`).join(" L ") + ` L ${toX(data.length - 1)},${zeroY} Z`;
   const ticks = [max, (max + min) / 2, min];
+  const ad = active != null ? data[active] : null;
   return (
-    <svg viewBox={`0 0 ${CHART_W} ${CHART_H}`} style={{ width: "100%", height: "auto" }}>
+    <svg ref={svgRef} {...bind} viewBox={`0 0 ${CHART_W} ${CHART_H}`} style={{ width: "100%", height: "auto", touchAction: "pan-y" }}>
       {ticks.map((t, i) => (
         <g key={i}>
           <line x1={PAD_L} y1={toY(t)} x2={CHART_W - PAD_R} y2={toY(t)} stroke={BORDER} strokeWidth="0.5" strokeDasharray="2 2" />
@@ -230,7 +261,26 @@ function AreaLineChart({ data, color }) {
       {data.map((d, i) => (
         <text key={i} x={toX(i)} y={CHART_H - 6} textAnchor="middle" fontSize="7" fill={MUTED} style={{ display: (i === 0 || i === data.length - 1 || i === Math.floor(data.length / 2)) ? "block" : "none" }}>{d.date.slice(5)}</text>
       ))}
+      {ad && <ChartCursor x={toX(active)} y={toY(ad.cum)} label={ad.date.slice(5)} value={fmtMoney(ad.cum)} />}
     </svg>
+  );
+}
+
+// 指示線 + 數值氣泡(三圖共用)
+function ChartCursor({ x, y, label, value }) {
+  const boxW = 78, boxH = 30;
+  let bx = x - boxW / 2;
+  if (bx < 2) bx = 2;
+  if (bx + boxW > CHART_W - 2) bx = CHART_W - 2 - boxW;
+  const by = 2;
+  return (
+    <g pointerEvents="none">
+      <line x1={x} y1={PAD_T} x2={x} y2={CHART_H - PAD_B} stroke={ACCENT} strokeWidth="1" strokeDasharray="3 2" />
+      <circle cx={x} cy={y} r="3.5" fill={ACCENT} stroke={BG} strokeWidth="1.5" />
+      <rect x={bx} y={by} width={boxW} height={boxH} rx="4" fill={PANEL2} stroke={BORDER} strokeWidth="0.5" />
+      <text x={bx + boxW / 2} y={by + 12} textAnchor="middle" fontSize="8" fill={MUTED}>{label}</text>
+      <text x={bx + boxW / 2} y={by + 24} textAnchor="middle" fontSize="9" fontWeight="600" fill={TEXT}>{value}</text>
+    </g>
   );
 }
 
@@ -242,9 +292,15 @@ function BarChartSVG({ data, color }) {
   const innerW = CHART_W - PAD_L - PAD_R;
   const bw = Math.max(2, Math.min(18, innerW / data.length * 0.7));
   const toX = (i) => PAD_L + innerW * (i + 0.5) / data.length;
+  const toIndexFromX = (vbX) => {
+    const i = Math.floor((vbX - PAD_L) / (innerW / data.length));
+    return Math.max(0, Math.min(data.length - 1, i));
+  };
+  const { active, svgRef, bind } = useChartHover(data.length, toIndexFromX);
   const ticks = [max, (max + min) / 2, min];
+  const ad = active != null ? data[active] : null;
   return (
-    <svg viewBox={`0 0 ${CHART_W} ${CHART_H}`} style={{ width: "100%", height: "auto" }}>
+    <svg ref={svgRef} {...bind} viewBox={`0 0 ${CHART_W} ${CHART_H}`} style={{ width: "100%", height: "auto", touchAction: "pan-y" }}>
       {ticks.map((t, i) => (
         <g key={i}>
           <line x1={PAD_L} y1={toY(t)} x2={CHART_W - PAD_R} y2={toY(t)} stroke={BORDER} strokeWidth="0.5" strokeDasharray="2 2" />
@@ -255,11 +311,12 @@ function BarChartSVG({ data, color }) {
       {data.map((d, i) => {
         const y = toY(d.daily);
         const h = Math.abs(y - zeroY);
-        return <rect key={i} x={toX(i) - bw / 2} y={Math.min(y, zeroY)} width={bw} height={Math.max(1, h)} rx="1" fill={d.daily >= 0 ? color.profit : color.loss} />;
+        return <rect key={i} x={toX(i) - bw / 2} y={Math.min(y, zeroY)} width={bw} height={Math.max(1, h)} rx="1" fill={d.daily >= 0 ? color.profit : color.loss} opacity={active != null && active !== i ? 0.4 : 1} />;
       })}
       {data.map((d, i) => (
         <text key={i} x={toX(i)} y={CHART_H - 6} textAnchor="middle" fontSize="7" fill={MUTED} style={{ display: (i === 0 || i === data.length - 1 || i === Math.floor(data.length / 2)) ? "block" : "none" }}>{d.date.slice(5)}</text>
       ))}
+      {ad && <ChartCursor x={toX(active)} y={toY(ad.daily)} label={ad.date.slice(5)} value={fmtMoney(ad.daily)} />}
     </svg>
   );
 }
@@ -273,8 +330,32 @@ function ScatterChartSVG({ data, color }) {
   const toX = (h) => PAD_L + innerW * h / 24;
   const ticks = [max, (max + min) / 2, min];
   const hourTicks = [0, 6, 12, 18, 24];
+  const [active, setActive] = useState(null);
+  const svgRef = useRef(null);
+  const pick = (clientX, clientY) => {
+    const svg = svgRef.current;
+    if (!svg) return;
+    const rect = svg.getBoundingClientRect();
+    const vbX = ((clientX - rect.left) / rect.width) * CHART_W;
+    const vbY = ((clientY - rect.top) / rect.height) * (CHART_H + 20);
+    // 找最近的點
+    let best = null, bestD = Infinity;
+    data.forEach((d, i) => {
+      const dx = toX(d.hour) - vbX, dy = toY(d.pnl) - vbY;
+      const dist = dx * dx + dy * dy;
+      if (dist < bestD) { bestD = dist; best = i; }
+    });
+    if (best != null && bestD < 400) setActive(best); // 限制點選範圍
+  };
+  const ad = active != null ? data[active] : null;
   return (
-    <svg viewBox={`0 0 ${CHART_W} ${CHART_H + 20}`} style={{ width: "100%", height: "auto" }}>
+    <svg ref={svgRef}
+      onTouchStart={(e) => e.touches[0] && pick(e.touches[0].clientX, e.touches[0].clientY)}
+      onTouchMove={(e) => e.touches[0] && pick(e.touches[0].clientX, e.touches[0].clientY)}
+      onTouchEnd={() => setActive(null)}
+      onMouseMove={(e) => pick(e.clientX, e.clientY)}
+      onMouseLeave={() => setActive(null)}
+      viewBox={`0 0 ${CHART_W} ${CHART_H + 20}`} style={{ width: "100%", height: "auto", touchAction: "pan-y" }}>
       {ticks.map((t, i) => (
         <g key={i}>
           <line x1={PAD_L} y1={toY(t)} x2={CHART_W - PAD_R} y2={toY(t)} stroke={BORDER} strokeWidth="0.5" strokeDasharray="2 2" />
@@ -283,12 +364,35 @@ function ScatterChartSVG({ data, color }) {
       ))}
       <line x1={PAD_L} y1={zeroY} x2={CHART_W - PAD_R} y2={zeroY} stroke={BORDER} strokeWidth="1" />
       {data.map((d, i) => (
-        <circle key={i} cx={toX(d.hour)} cy={toY(d.pnl)} r="3.5" fill={d.win ? color.profit : color.loss} fillOpacity="0.6" />
+        <circle key={i} cx={toX(d.hour)} cy={toY(d.pnl)} r={active === i ? 5 : 3.5} fill={d.win ? color.profit : color.loss} fillOpacity={active != null && active !== i ? 0.3 : 0.65} stroke={active === i ? TEXT : "none"} strokeWidth="1" />
       ))}
       {hourTicks.map((h, i) => (
         <text key={i} x={toX(h)} y={CHART_H + 14} textAnchor="middle" fontSize="8" fill={MUTED}>{String(h).padStart(2, "0")}:00</text>
       ))}
+      {ad && (() => {
+        const hh = Math.floor(ad.hour), mm = Math.round((ad.hour - hh) * 60);
+        const tstr = String(hh).padStart(2, "0") + ":" + String(mm).padStart(2, "0");
+        const dstr = ad.date ? ad.date.slice(5) : "";
+        return <ChartCursorXY x={toX(ad.hour)} y={toY(ad.pnl)} label={(ad.symbol ? ad.symbol + " " : "") + dstr + " " + tstr} value={fmtMoney(ad.pnl)} />;
+      })()}
     </svg>
+  );
+}
+
+// 散點圖用的氣泡(不畫垂直線,只在點旁顯示)
+function ChartCursorXY({ x, y, label, value }) {
+  const boxW = 122, boxH = 30;
+  let bx = x - boxW / 2;
+  if (bx < 2) bx = 2;
+  if (bx + boxW > CHART_W - 2) bx = CHART_W - 2 - boxW;
+  let by = y - boxH - 8;
+  if (by < 2) by = y + 8;
+  return (
+    <g pointerEvents="none">
+      <rect x={bx} y={by} width={boxW} height={boxH} rx="4" fill={PANEL2} stroke={BORDER} strokeWidth="0.5" />
+      <text x={bx + boxW / 2} y={by + 12} textAnchor="middle" fontSize="7.5" fill={MUTED}>{label}</text>
+      <text x={bx + boxW / 2} y={by + 24} textAnchor="middle" fontSize="9" fontWeight="600" fill={TEXT}>{value}</text>
+    </g>
   );
 }
 
@@ -414,7 +518,7 @@ function TradeJournal() {
       .filter((t) => t.time && /^\d{1,2}:\d{2}$/.test(t.time))
       .map((t) => {
         const [h, m] = t.time.split(":").map(Number);
-        return { hour: h + m / 60, pnl: t.pnl, symbol: t.symbol, win: t.pnl >= 0 };
+        return { hour: h + m / 60, pnl: t.pnl, symbol: t.symbol, date: t.date, win: t.pnl >= 0 };
       });
   }, [scopedTrades]);
   const periodPnl = useMemo(() => {
