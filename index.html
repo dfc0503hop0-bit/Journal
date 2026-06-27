@@ -962,15 +962,22 @@ try {
       var src = document.getElementById("app-source").textContent;
       var compiled = Babel.transform(src, {
         presets: [["react", { runtime: "classic" }]],
+        sourceType: "script",
       }).code;
+      // 暴力清除任何殘留的 import/export 語句(瀏覽器執行不支援)
+      compiled = compiled
+        .replace(/^\s*import\s+.*?;?\s*$/gm, "")
+        .replace(/^\s*export\s+default\s+/gm, "")
+        .replace(/^\s*export\s+\{[^}]*\}\s*;?\s*$/gm, "")
+        .replace(/^\s*export\s+/gm, "")
+        .replace(/"use strict";/g, "");
       if (window.__loadTimeout) clearTimeout(window.__loadTimeout);
       // require shim:萬一 babel 產生 require(...),導向全域物件
       var requireShim = function (name) {
         if (name === "react") return window.React;
         if (name === "react-dom" || name === "react-dom/client") return window.ReactDOM;
-        throw new Error("不支援的模組: " + name);
+        return {};
       };
-      // 包成 IIFE,把 require/exports/module 當參數傳入,避免 ReferenceError
       var wrapped = "(function(require, exports, module){\n" + compiled + "\n})";
       (new Function("return " + wrapped)())(requireShim, {}, { exports: {} });
     } catch (err) {
