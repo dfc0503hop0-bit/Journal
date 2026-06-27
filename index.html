@@ -56,25 +56,21 @@ window.__updateStatus = function () {
   el.innerHTML =
     "React " + (l.react ? "✓" : "…") + " &nbsp; " +
     "ReactDOM " + (l.dom ? "✓" : "…") + "<br>" +
-    "PropTypes " + (l.proptypes ? "✓" : "…") + "<br>" +
-    "Recharts " + (l.recharts ? "✓" : "…") + " &nbsp; " +
     "Babel " + (l.babel ? "✓" : "…") +
-    (l.react && l.dom && l.proptypes && l.recharts && l.babel ? "<br>元件就緒,編譯中…" : "");
+    (l.react && l.dom && l.babel ? "<br>元件就緒,編譯中…" : "");
 };
 </script>
 
 <script>
 // 載入逾時偵測:8 秒內元件沒載好就顯示重試畫面
-window.__libsLoaded = { react: false, dom: false, proptypes: false, recharts: false, babel: false };
+window.__libsLoaded = { react: false, dom: false, babel: false };
 window.__loadTimeout = setTimeout(function () {
   var l = window.__libsLoaded;
   // 只有當外部元件「真的沒載入」才顯示重試;若元件都載入了(代表在跑babel編譯)就繼續等
-  if (!(l.react && l.dom && l.proptypes && l.recharts && l.babel)) {
+  if (!(l.react && l.dom && l.babel)) {
     var miss = [];
     if (!l.react) miss.push("React");
     if (!l.dom) miss.push("ReactDOM");
-    if (!l.proptypes) miss.push("PropTypes");
-    if (!l.recharts) miss.push("Recharts");
     if (!l.babel) miss.push("Babel");
     document.getElementById("root").innerHTML =
       '<div style="color:#e6edf3;font-family:sans-serif;text-align:center;padding:60px 24px;">' +
@@ -87,8 +83,6 @@ window.__loadTimeout = setTimeout(function () {
 </script>
 <script crossorigin src="https://cdn.jsdelivr.net/npm/react@18/umd/react.production.min.js" onload="window.__libsLoaded.react=true;window.__updateStatus()"></script>
 <script crossorigin src="https://cdn.jsdelivr.net/npm/react-dom@18/umd/react-dom.production.min.js" onload="window.__libsLoaded.dom=true;window.__updateStatus()"></script>
-<script crossorigin src="https://cdn.jsdelivr.net/npm/prop-types@15.8.1/prop-types.min.js" onload="window.__libsLoaded.proptypes=true;window.__updateStatus()"></script>
-<script crossorigin src="https://cdn.jsdelivr.net/npm/recharts@2.12.7/umd/Recharts.js" onload="window.__libsLoaded.recharts=true;window.__updateStatus()"></script>
 <script crossorigin src="https://cdn.jsdelivr.net/npm/@babel/standalone/babel.min.js" onload="window.__libsLoaded.babel=true;window.__updateStatus()"></script>
 
 <script>
@@ -170,10 +164,6 @@ async function dbBulkPut(trades) {
 
 <script type="text/plain" id="app-source">
 const { useState, useMemo, useRef, useEffect } = React;
-const {
-  LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, ReferenceLine,
-  AreaChart, Area, BarChart, Bar, Cell, ScatterChart, Scatter, ZAxis,
-} = Recharts;
 
 // ============================================================
 // 顏色慣例:綠=賺 紅=賠 (對調只需互換下面兩個常數值)
@@ -195,6 +185,113 @@ const fmtMoney = (v) =>
   (v >= 0 ? "+" : "−") + "US$" +
   Math.abs(v).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const fmtR = (v) => (v >= 0 ? "+" : "−") + Math.abs(v).toFixed(2) + "R";
+
+// ============================================================
+// 純 SVG 圖表元件(不依賴任何圖表庫)
+// ============================================================
+const CHART_W = 320, CHART_H = 170, PAD_L = 38, PAD_R = 8, PAD_T = 10, PAD_B = 22;
+
+// 計算 Y 軸範圍與刻度
+function yScale(values, h) {
+  let min = Math.min(0, ...values), max = Math.max(0, ...values);
+  if (min === max) { max = max + 1; min = min - 1; }
+  const range = max - min;
+  const innerH = h - PAD_T - PAD_B;
+  const toY = (v) => PAD_T + innerH * (1 - (v - min) / range);
+  return { min, max, toY, zeroY: toY(0) };
+}
+function fmtAxis(v) {
+  return Math.abs(v) >= 1000 ? (v / 1000).toFixed(1) + "k" : Math.round(v).toString();
+}
+
+// 折線+漸層面積圖(每日淨累積)
+function AreaLineChart({ data, color }) {
+  if (!data.length) return <div style={{ textAlign: "center", color: MUTED, fontSize: 12, padding: "30px 0" }}>此區間沒有交易紀錄</div>;
+  const vals = data.map((d) => d.cum);
+  const { min, max, toY, zeroY } = yScale(vals, CHART_H);
+  const innerW = CHART_W - PAD_L - PAD_R;
+  const toX = (i) => PAD_L + (data.length === 1 ? innerW / 2 : innerW * i / (data.length - 1));
+  const linePts = data.map((d, i) => `${toX(i)},${toY(d.cum)}`).join(" ");
+  const lastPos = data[data.length - 1].cum >= 0;
+  const areaFill = lastPos ? color.profit : color.loss;
+  const areaPath = `M ${toX(0)},${zeroY} L ` + data.map((d, i) => `${toX(i)},${toY(d.cum)}`).join(" L ") + ` L ${toX(data.length - 1)},${zeroY} Z`;
+  const ticks = [max, (max + min) / 2, min];
+  return (
+    <svg viewBox={`0 0 ${CHART_W} ${CHART_H}`} style={{ width: "100%", height: "auto" }}>
+      {ticks.map((t, i) => (
+        <g key={i}>
+          <line x1={PAD_L} y1={toY(t)} x2={CHART_W - PAD_R} y2={toY(t)} stroke={BORDER} strokeWidth="0.5" strokeDasharray="2 2" />
+          <text x={PAD_L - 4} y={toY(t) + 3} textAnchor="end" fontSize="8" fill={MUTED}>{fmtAxis(t)}</text>
+        </g>
+      ))}
+      <line x1={PAD_L} y1={zeroY} x2={CHART_W - PAD_R} y2={zeroY} stroke={BORDER} strokeWidth="1" />
+      <path d={areaPath} fill={areaFill} fillOpacity="0.18" />
+      <polyline points={linePts} fill="none" stroke={ACCENT} strokeWidth="2" strokeLinejoin="round" strokeLinecap="round" />
+      {data.map((d, i) => (
+        <text key={i} x={toX(i)} y={CHART_H - 6} textAnchor="middle" fontSize="7" fill={MUTED} style={{ display: (i === 0 || i === data.length - 1 || i === Math.floor(data.length / 2)) ? "block" : "none" }}>{d.date.slice(5)}</text>
+      ))}
+    </svg>
+  );
+}
+
+// 長條圖(每日淨損益)
+function BarChartSVG({ data, color }) {
+  if (!data.length) return <div style={{ textAlign: "center", color: MUTED, fontSize: 12, padding: "30px 0" }}>此區間沒有交易紀錄</div>;
+  const vals = data.map((d) => d.daily);
+  const { min, max, toY, zeroY } = yScale(vals, CHART_H);
+  const innerW = CHART_W - PAD_L - PAD_R;
+  const bw = Math.max(2, Math.min(18, innerW / data.length * 0.7));
+  const toX = (i) => PAD_L + innerW * (i + 0.5) / data.length;
+  const ticks = [max, (max + min) / 2, min];
+  return (
+    <svg viewBox={`0 0 ${CHART_W} ${CHART_H}`} style={{ width: "100%", height: "auto" }}>
+      {ticks.map((t, i) => (
+        <g key={i}>
+          <line x1={PAD_L} y1={toY(t)} x2={CHART_W - PAD_R} y2={toY(t)} stroke={BORDER} strokeWidth="0.5" strokeDasharray="2 2" />
+          <text x={PAD_L - 4} y={toY(t) + 3} textAnchor="end" fontSize="8" fill={MUTED}>{fmtAxis(t)}</text>
+        </g>
+      ))}
+      <line x1={PAD_L} y1={zeroY} x2={CHART_W - PAD_R} y2={zeroY} stroke={BORDER} strokeWidth="1" />
+      {data.map((d, i) => {
+        const y = toY(d.daily);
+        const h = Math.abs(y - zeroY);
+        return <rect key={i} x={toX(i) - bw / 2} y={Math.min(y, zeroY)} width={bw} height={Math.max(1, h)} rx="1" fill={d.daily >= 0 ? color.profit : color.loss} />;
+      })}
+      {data.map((d, i) => (
+        <text key={i} x={toX(i)} y={CHART_H - 6} textAnchor="middle" fontSize="7" fill={MUTED} style={{ display: (i === 0 || i === data.length - 1 || i === Math.floor(data.length / 2)) ? "block" : "none" }}>{d.date.slice(5)}</text>
+      ))}
+    </svg>
+  );
+}
+
+// 散點圖(時段表現:X=0-24小時, Y=損益)
+function ScatterChartSVG({ data, color }) {
+  if (!data.length) return <div style={{ textAlign: "center", color: MUTED, fontSize: 12, padding: "20px 0" }}>新增交易時填寫「進場時間」即可在此顯示</div>;
+  const vals = data.map((d) => d.pnl);
+  const { min, max, toY, zeroY } = yScale(vals, CHART_H + 20);
+  const innerW = CHART_W - PAD_L - PAD_R;
+  const toX = (h) => PAD_L + innerW * h / 24;
+  const ticks = [max, (max + min) / 2, min];
+  const hourTicks = [0, 6, 12, 18, 24];
+  return (
+    <svg viewBox={`0 0 ${CHART_W} ${CHART_H + 20}`} style={{ width: "100%", height: "auto" }}>
+      {ticks.map((t, i) => (
+        <g key={i}>
+          <line x1={PAD_L} y1={toY(t)} x2={CHART_W - PAD_R} y2={toY(t)} stroke={BORDER} strokeWidth="0.5" strokeDasharray="2 2" />
+          <text x={PAD_L - 4} y={toY(t) + 3} textAnchor="end" fontSize="8" fill={MUTED}>{fmtAxis(t)}</text>
+        </g>
+      ))}
+      <line x1={PAD_L} y1={zeroY} x2={CHART_W - PAD_R} y2={zeroY} stroke={BORDER} strokeWidth="1" />
+      {data.map((d, i) => (
+        <circle key={i} cx={toX(d.hour)} cy={toY(d.pnl)} r="3.5" fill={d.win ? color.profit : color.loss} fillOpacity="0.6" />
+      ))}
+      {hourTicks.map((h, i) => (
+        <text key={i} x={toX(h)} y={CHART_H + 14} textAnchor="middle" fontSize="8" fill={MUTED}>{String(h).padStart(2, "0")}:00</text>
+      ))}
+    </svg>
+  );
+}
+
 
 const seed = () => {
   const today = new Date();
@@ -564,72 +661,22 @@ function Dashboard({ stats, periodPnl, equityData, curveScale, setCurveScale, tr
       </div>
 
       {/* 圖一:每日淨累積損益(漸層面積) */}
-      <div style={{ background: PANEL, border: `1px solid ${BORDER}`, borderRadius: 12, padding: "14px 14px 6px" }}>
+      <div style={{ background: PANEL, border: `1px solid ${BORDER}`, borderRadius: 12, padding: "14px 14px 10px" }}>
         <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 8 }}>每日淨累積損益</div>
-        <ResponsiveContainer width="100%" height={180}>
-          <AreaChart data={dailyData} margin={{ top: 6, right: 6, left: -18, bottom: 0 }}>
-            <defs>
-              <linearGradient id="gradPos" x1="0" y1="0" x2="0" y2="1">
-                <stop offset="0%" stopColor={PROFIT_COLOR} stopOpacity={0.35} />
-                <stop offset="100%" stopColor={PROFIT_COLOR} stopOpacity={0} />
-              </linearGradient>
-              <linearGradient id="gradNeg" x1="0" y1="1" x2="0" y2="0">
-                <stop offset="0%" stopColor={LOSS_COLOR} stopOpacity={0.35} />
-                <stop offset="100%" stopColor={LOSS_COLOR} stopOpacity={0} />
-              </linearGradient>
-            </defs>
-            <XAxis dataKey="date" tick={{ fontSize: 9, fill: MUTED }} tickFormatter={(d) => d.slice(5)} minTickGap={24} axisLine={{ stroke: BORDER }} tickLine={false} />
-            <YAxis tick={{ fontSize: 9, fill: MUTED }} tickFormatter={(v) => Math.abs(v) >= 1000 ? (v / 1000).toFixed(1) + "k" : v.toFixed(0)} axisLine={false} tickLine={false} />
-            <Tooltip contentStyle={{ background: PANEL2, border: `1px solid ${BORDER}`, borderRadius: 8, fontSize: 12 }}
-              labelStyle={{ color: MUTED }} formatter={(v) => [fmtMoney(v), "累積"]} />
-            <ReferenceLine y={0} stroke={BORDER} />
-            <Area type="monotone" dataKey="cum" stroke={ACCENT} strokeWidth={2}
-              fill={dailyData.length && dailyData[dailyData.length - 1].cum >= 0 ? "url(#gradPos)" : "url(#gradNeg)"} dot={false} />
-          </AreaChart>
-        </ResponsiveContainer>
-        {!hasDaily && <div style={{ textAlign: "center", color: MUTED, fontSize: 12, padding: "20px 0" }}>此區間沒有交易紀錄</div>}
+        <AreaLineChart data={dailyData} color={{ profit: PROFIT_COLOR, loss: LOSS_COLOR }} />
       </div>
 
       {/* 圖二:每日淨損益(長條) */}
-      <div style={{ background: PANEL, border: `1px solid ${BORDER}`, borderRadius: 12, padding: "14px 14px 6px" }}>
+      <div style={{ background: PANEL, border: `1px solid ${BORDER}`, borderRadius: 12, padding: "14px 14px 10px" }}>
         <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 8 }}>每日淨損益</div>
-        <ResponsiveContainer width="100%" height={180}>
-          <BarChart data={dailyData} margin={{ top: 6, right: 6, left: -18, bottom: 0 }}>
-            <XAxis dataKey="date" tick={{ fontSize: 9, fill: MUTED }} tickFormatter={(d) => d.slice(5)} minTickGap={24} axisLine={{ stroke: BORDER }} tickLine={false} />
-            <YAxis tick={{ fontSize: 9, fill: MUTED }} tickFormatter={(v) => Math.abs(v) >= 1000 ? (v / 1000).toFixed(1) + "k" : v.toFixed(0)} axisLine={false} tickLine={false} />
-            <Tooltip contentStyle={{ background: PANEL2, border: `1px solid ${BORDER}`, borderRadius: 8, fontSize: 12 }}
-              labelStyle={{ color: MUTED }} formatter={(v) => [fmtMoney(v), "當日"]} cursor={{ fill: "rgba(255,255,255,0.04)" }} />
-            <ReferenceLine y={0} stroke={BORDER} />
-            <Bar dataKey="daily" radius={[2, 2, 0, 0]}>
-              {dailyData.map((d, i) => <Cell key={i} fill={d.daily >= 0 ? PROFIT_COLOR : LOSS_COLOR} />)}
-            </Bar>
-          </BarChart>
-        </ResponsiveContainer>
-        {!hasDaily && <div style={{ textAlign: "center", color: MUTED, fontSize: 12, padding: "20px 0" }}>此區間沒有交易紀錄</div>}
+        <BarChartSVG data={dailyData} color={{ profit: PROFIT_COLOR, loss: LOSS_COLOR }} />
       </div>
 
       {/* 圖三:交易時段表現(散點) */}
-      <div style={{ background: PANEL, border: `1px solid ${BORDER}`, borderRadius: 12, padding: "14px 14px 6px" }}>
+      <div style={{ background: PANEL, border: `1px solid ${BORDER}`, borderRadius: 12, padding: "14px 14px 10px" }}>
         <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 2 }}>交易時段表現</div>
         <div style={{ fontSize: 11, color: MUTED, marginBottom: 8 }}>每點一筆交易,依進場時間分布</div>
-        <ResponsiveContainer width="100%" height={200}>
-          <ScatterChart margin={{ top: 6, right: 6, left: -18, bottom: 0 }}>
-            <XAxis type="number" dataKey="hour" domain={[0, 24]} ticks={[0, 4, 8, 12, 16, 20, 24]}
-              tick={{ fontSize: 9, fill: MUTED }} tickFormatter={(h) => `${String(h).padStart(2, "0")}:00`}
-              axisLine={{ stroke: BORDER }} tickLine={false} />
-            <YAxis type="number" dataKey="pnl" tick={{ fontSize: 9, fill: MUTED }}
-              tickFormatter={(v) => Math.abs(v) >= 1000 ? (v / 1000).toFixed(1) + "k" : v.toFixed(0)} axisLine={false} tickLine={false} />
-            <ZAxis range={[40, 40]} />
-            <Tooltip contentStyle={{ background: PANEL2, border: `1px solid ${BORDER}`, borderRadius: 8, fontSize: 12 }}
-              labelStyle={{ color: MUTED }} cursor={{ strokeDasharray: "3 3", stroke: BORDER }}
-              formatter={(v, n) => n === "pnl" ? [fmtMoney(v), "損益"] : [v, n]} />
-            <ReferenceLine y={0} stroke={BORDER} />
-            <Scatter data={timeScatter} fillOpacity={0.65}>
-              {timeScatter.map((d, i) => <Cell key={i} fill={d.win ? PROFIT_COLOR : LOSS_COLOR} />)}
-            </Scatter>
-          </ScatterChart>
-        </ResponsiveContainer>
-        {timeScatter.length === 0 && <div style={{ textAlign: "center", color: MUTED, fontSize: 12, padding: "16px 0" }}>新增交易時填寫「進場時間」即可在此顯示</div>}
+        <ScatterChartSVG data={timeScatter} color={{ profit: PROFIT_COLOR, loss: LOSS_COLOR }} />
       </div>
 
       {/* 統計指標 */}
@@ -908,18 +955,16 @@ try {
 (function () {
   function ready() {
     var l = window.__libsLoaded;
-    return l.react && l.dom && l.proptypes && l.recharts && l.babel && window.Babel;
+    return l.react && l.dom && l.babel && window.Babel;
   }
   function run() {
     try {
       var src = document.getElementById("app-source").textContent;
-      var out = Babel.transform(src, {
-        presets: ["react"],
-        sourceType: "script",
-      }).code;
+      var compiled = Babel.transform(src, { presets: ["react"] }).code;
       if (window.__loadTimeout) clearTimeout(window.__loadTimeout);
-      // 用 Function 執行(非 eval,避免 @import 被當成模組 import 語法)
-      (new Function(out))();
+      // 包成 IIFE 並剝除任何被 babel 產生的 "use strict" 模組標記後執行
+      var wrapped = "(function(){\n" + compiled + "\n})();";
+      (new Function(wrapped))();
     } catch (err) {
       var root = document.getElementById("root");
       root.innerHTML = '<div style="color:#e8482b;font-family:monospace;padding:40px 20px;font-size:12px;white-space:pre-wrap;word-break:break-word;">編譯/執行錯誤:\n' +
