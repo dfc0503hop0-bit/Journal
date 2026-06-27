@@ -212,7 +212,7 @@ const seed = () => {
   ];
 };
 
-export default function TradeJournal() {
+function TradeJournal() {
   const [trades, setTrades] = useState([]);
   const [loaded, setLoaded] = useState(false);
   // 啟動時從 IndexedDB 載入;若為空(首次使用)則灌入種子範例
@@ -913,7 +913,10 @@ try {
   function run() {
     try {
       var src = document.getElementById("app-source").textContent;
-      var out = Babel.transform(src, { presets: ["react"] }).code;
+      var out = Babel.transform(src, {
+        presets: ["react"],
+        sourceType: "script",
+      }).code;
       if (window.__loadTimeout) clearTimeout(window.__loadTimeout);
       // 用 Function 執行(非 eval,避免 @import 被當成模組 import 語法)
       (new Function(out))();
