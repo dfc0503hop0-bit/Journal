@@ -1,0 +1,50 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>測試</title>
+</head>
+<body style="background:#0e1116;color:#e6edf3;font-family:sans-serif;">
+<div id="root" style="padding:40px;">載入中…</div>
+
+<script src="https://cdn.jsdelivr.net/npm/react@18/umd/react.production.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/react-dom@18/umd/react-dom.production.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@babel/standalone/babel.min.js"></script>
+
+<script type="text/plain" id="src">
+function App() {
+  const [n, setN] = React.useState(0);
+  return React.createElement("div", null,
+    React.createElement("h2", null, "✓ 基礎架構正常"),
+    React.createElement("p", null, "計數: " + n),
+    React.createElement("button", {
+      onClick: function () { setN(n + 1); },
+      style: { padding: "10px 20px", fontSize: "16px" }
+    }, "點我 +1")
+  );
+}
+ReactDOM.createRoot(document.getElementById("root")).render(React.createElement(App));
+</script>
+
+<script>
+window.addEventListener("error", function (e) {
+  document.getElementById("root").innerHTML =
+    '<div style="color:#e8482b;white-space:pre-wrap;">錯誤: ' + (e.message || e) + '</div>';
+});
+var t = setInterval(function () {
+  if (window.React && window.ReactDOM && window.Babel) {
+    clearInterval(t);
+    try {
+      var src = document.getElementById("src").textContent;
+      var code = Babel.transform(src, { presets: ["react"] }).code;
+      (new Function(code))();
+    } catch (err) {
+      document.getElementById("root").innerHTML =
+        '<div style="color:#e8482b;white-space:pre-wrap;">編譯錯誤: ' + (err.message || err) + '</div>';
+    }
+  }
+}, 100);
+</script>
+</body>
+</html>
