@@ -443,7 +443,6 @@ export default function TradeJournal() {
   return (
     <div style={{ background: BG, color: TEXT, minHeight: "100vh", fontFamily: "'IBM Plex Sans', system-ui, -apple-system, sans-serif", paddingBottom: 80 }}>
       <style>{`
-        @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500;600&display=swap');
         * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
         .mono { font-family: 'IBM Plex Mono', monospace; font-variant-numeric: tabular-nums; }
         input, select, textarea { font-family: inherit; }
@@ -916,8 +915,8 @@ try {
       var src = document.getElementById("app-source").textContent;
       var out = Babel.transform(src, { presets: ["react"] }).code;
       if (window.__loadTimeout) clearTimeout(window.__loadTimeout);
-      // 執行編譯後的程式碼
-      (0, eval)(out);
+      // 用 Function 執行(非 eval,避免 @import 被當成模組 import 語法)
+      (new Function(out))();
     } catch (err) {
       var root = document.getElementById("root");
       root.innerHTML = '<div style="color:#e8482b;font-family:monospace;padding:40px 20px;font-size:12px;white-space:pre-wrap;word-break:break-word;">編譯/執行錯誤:\n' +
