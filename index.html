@@ -160,6 +160,16 @@ async function dbBulkPut(trades) {
     tx.onerror = () => reject(tx.error);
   });
 }
+
+async function dbClear() {
+  const db = await openDB();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(STORE, "readwrite");
+    tx.objectStore(STORE).clear();
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error);
+  });
+}
 </script>
 
 <script type="text/plain" id="app-source">
@@ -484,17 +494,23 @@ const seed = () => {
 function TradeJournal() {
   const [trades, setTrades] = useState([]);
   const [loaded, setLoaded] = useState(false);
-  // 啟動時從 IndexedDB 載入;若為空(首次使用)則灌入種子範例
+  const [dataMenu, setDataMenu] = useState(false);
+  // 啟動時從 IndexedDB 載入。只有「從未初始化過」才灌入種子範例;
+  // 一旦初始化過,即使使用者刪到剩 0 筆,也不會再自動補範例。
   useEffect(() => {
     (async () => {
       try {
         let data = await dbGetAll();
-        if (!data || data.length === 0) {
+        let seededFlag = null;
+        try { seededFlag = localStorage.getItem("tj_seeded"); } catch (e) {}
+        if ((!data || data.length === 0) && !seededFlag) {
+          // 真正的首次使用:灌種子並記下標記
           const seeded = seed();
           await dbBulkPut(seeded);
+          try { localStorage.setItem("tj_seeded", "1"); } catch (e) {}
           data = seeded;
         }
-        setTrades(data);
+        setTrades(data || []);
       } catch (e) {
         console.error("載入失敗", e);
       } finally {
@@ -682,6 +698,8 @@ function TradeJournal() {
     setTab("new");
   };
 
+  const menuItem = { display: "block", width: "100%", textAlign: "left", background: "transparent", color: TEXT, fontSize: 13, padding: "9px 8px", borderRadius: 6 };
+
   const exportCsv = () => {
     const cols = ["date","time","exitDate","exitTime","symbol","dir","strategy","entry","sl","tp","exit","qty","pointValue","fee","risk","rMultiple","pnl","reason","review"];
     const rows = trades.map((t) => cols.map((c) => JSON.stringify(t[c] ?? "")).join(","));
@@ -733,6 +751,59 @@ function TradeJournal() {
     e.target.value = "";
   };
 
+  // ── JSON 完整備份(含圖片)──
+  const exportJson = () => {
+    const payload = { app: "trade-journal", version: 1, exportedAt: new Date().toISOString(), trades };
+    const blob = new Blob([JSON.stringify(payload)], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    const stamp = new Date().toISOString().slice(0, 10);
+    a.href = url; a.download = `trade-journal-backup-${stamp}.json`; a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const jsonInputRef = useRef();
+  const importJson = (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = async () => {
+      try {
+        const obj = JSON.parse(reader.result);
+        const list = Array.isArray(obj) ? obj : obj.trades;
+        if (!Array.isArray(list)) { alert("檔案格式不正確,找不到交易資料"); return; }
+        // 重新指派 id 避免衝突,確保 imgs 存在
+        const parsed = list.map((t, i) => ({ ...t, id: Date.now() + i, imgs: Array.isArray(t.imgs) ? t.imgs : [] }));
+        if (!confirm("匯入 " + parsed.length + " 筆交易(含圖片)?\n這會新增到現有紀錄,不會覆蓋。")) return;
+        await dbBulkPut(parsed);
+        setTrades((prev) => [...prev, ...parsed]);
+        alert("已匯入 " + parsed.length + " 筆(含圖片)");
+      } catch (err) {
+        alert("匯入失敗,請確認是本 App 匯出的 JSON 備份檔");
+        console.error(err);
+      }
+    };
+    reader.readAsText(file);
+    e.target.value = "";
+  };
+
+  // ── 一鍵清除全部(雙重確認)──
+  const clearAll = async () => {
+    if (trades.length === 0) { alert("目前沒有任何紀錄"); return; }
+    const first = confirm("⚠️ 確定要清除全部 " + trades.length + " 筆交易嗎?\n\n此動作無法復原。建議先匯出 JSON 備份。");
+    if (!first) return;
+    const second = confirm("再次確認:真的要刪除全部紀錄?\n\n按「確定」後資料將永久消失,無法救回。");
+    if (!second) return;
+    try {
+      await dbClear();
+      setTrades([]);
+      alert("已清除全部紀錄。可以開始記錄新的交易了。");
+    } catch (err) {
+      alert("清除失敗");
+      console.error(err);
+    }
+  };
+
   return (
     <div style={{ background: BG, color: TEXT, minHeight: "100vh", fontFamily: "'IBM Plex Sans', system-ui, -apple-system, sans-serif", paddingBottom: 80 }}>
       <style>{`
@@ -751,11 +822,24 @@ function TradeJournal() {
             <div style={{ fontSize: 11, letterSpacing: 2, color: ACCENT, fontWeight: 600 }}>TRADE JOURNAL</div>
             <div style={{ fontSize: 20, fontWeight: 600, marginTop: 2 }}>交易檢討日誌</div>
           </div>
-          <div style={{ display: "flex", gap: 6 }}>
-            <button onClick={() => fileInputRef.current.click()} className="mono" style={{ background: PANEL2, color: MUTED, fontSize: 11, padding: "6px 10px", borderRadius: 6, border: `1px solid ${BORDER}` }}>匯入</button>
-            <button onClick={exportCsv} className="mono" style={{ background: PANEL2, color: MUTED, fontSize: 11, padding: "6px 10px", borderRadius: 6, border: `1px solid ${BORDER}` }}>匯出 CSV</button>
-            <input ref={fileInputRef} type="file" accept=".csv,text/csv" onChange={importCsv} style={{ display: "none" }} />
+          <div style={{ position: "relative" }}>
+            <button onClick={() => setDataMenu((v) => !v)} className="mono" style={{ background: PANEL2, color: TEXT, fontSize: 12, padding: "7px 14px", borderRadius: 8, border: `1px solid ${BORDER}` }}>資料 ▾</button>
+            {dataMenu && (
+              <div style={{ position: "absolute", right: 0, top: "110%", background: PANEL, border: `1px solid ${BORDER}`, borderRadius: 10, padding: 6, zIndex: 20, width: 178, boxShadow: "0 8px 24px rgba(0,0,0,0.4)" }}>
+                <div style={{ fontSize: 9, color: MUTED, letterSpacing: 1, padding: "6px 8px 2px" }}>備份 / 還原(含圖片)</div>
+                <button onClick={() => { setDataMenu(false); exportJson(); }} style={menuItem}>⬇︎ 備份成 JSON 檔</button>
+                <button onClick={() => { setDataMenu(false); jsonInputRef.current.click(); }} style={menuItem}>⬆︎ 從 JSON 還原</button>
+                <div style={{ height: 1, background: BORDER, margin: "4px 0" }} />
+                <div style={{ fontSize: 9, color: MUTED, letterSpacing: 1, padding: "6px 8px 2px" }}>純數據(不含圖片)</div>
+                <button onClick={() => { setDataMenu(false); exportCsv(); }} style={menuItem}>匯出 CSV</button>
+                <button onClick={() => { setDataMenu(false); fileInputRef.current.click(); }} style={menuItem}>匯入 CSV</button>
+                <div style={{ height: 1, background: BORDER, margin: "4px 0" }} />
+                <button onClick={() => { setDataMenu(false); clearAll(); }} style={{ ...menuItem, color: LOSS_COLOR }}>🗑 清除全部紀錄</button>
+              </div>
+            )}
           </div>
+          <input ref={fileInputRef} type="file" accept=".csv,text/csv" onChange={importCsv} style={{ display: "none" }} />
+          <input ref={jsonInputRef} type="file" accept=".json,application/json" onChange={importJson} style={{ display: "none" }} />
         </div>
       </div>
 
